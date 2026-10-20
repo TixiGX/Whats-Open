@@ -1,0 +1,76 @@
+name: diag
+
+# Diagnostica temporanea: verifica che le immagini dei container usate dalla
+# CI accettino ancora l'installazione dei pacchetti. Viene cancellata appena
+# i job glibc e musl funzionano.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/diag.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  debian:
+    name: strumenti ubuntu 20.04
+    runs-on: ubuntu-22.04
+    container: ubuntu:20.04
+    steps:
+      - name: Installa
+        run: |
+          set -o pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          { apt-get update
+            apt-get install -y --no-install-recommends \
+              curl ca-certificates build-essential pkg-config git jq \
+              libasound2-dev libxkbcommon-dev libwayland-dev \
+              libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+              libgl1-mesa-dev libegl1-mesa-dev libssl-dev
+            ldd --version | head -1
+          } 2>&1 | tee tools.log
+
+      - name: Pubblica
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          tail -c 30000 tools.log > tail.log 2>/dev/null || true
+          jq -Rs '{body: .}' tail.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
+
+  alpine:
+    name: strumenti alpine
+    runs-on: ubuntu-22.04
+    container: alpine:3.22
+    steps:
+      - name: Installa
+        run: |
+          set -o pipefail
+          { apk add --no-cache \
+              build-base musl-dev pkgconf git curl ca-certificates tar gzip jq \
+              alsa-lib-dev alsa-lib-static linux-headers
+            ldd --version | head -1
+          } 2>&1 | tee tools.log
+
+      - name: Pubblica
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          tail -c 30000 tools.log > tail.log 2>/dev/null || true
+          jq -Rs '{body: .}' tail.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
