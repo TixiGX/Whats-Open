@@ -34,10 +34,10 @@ copia di WhatsApp Web.
 ### Binario statico (qualsiasi distribuzione)
 
 L'archivio `whats-open-linux-x86_64-musl.tar.gz` contiene un binario
-**statico**: non dipende dalla versione di glibc né dalla distribuzione. Va bene
-su Debian, Ubuntu, Fedora, RHEL, openSUSE, Arch, Alpine, NixOS, Void, Gentoo,
-Slackware, sui sistemi immutabili (Silverblue, MicroOS) e nelle sandbox Flatpak
-o Distrobox.
+**statico**: non dipende dalla versione di glibc né dalla distribuzione, e ALSA
+è compilata dentro il binario. Va bene su Debian, Ubuntu, Fedora, RHEL,
+openSUSE, Arch, Alpine, NixOS, Void, Gentoo, Slackware, sui sistemi immutabili
+(Silverblue, MicroOS) e nelle sandbox Flatpak o Distrobox.
 
 ```bash
 tar xzf whats-open-linux-x86_64-musl.tar.gz
@@ -48,9 +48,10 @@ cd whats-open-0.1.0-linux-x86_64-musl
 
 ### Binario glibc
 
-`whats-open-linux-x86_64-glibc.tar.gz` è compilato su Debian 11 (glibc 2.31):
-funziona su Debian 11+, Ubuntu 20.04+, Fedora 33+, RHEL 9+, openSUSE Leap 15.4+,
-Arch e derivate. Stessa procedura di installazione.
+`whats-open-linux-x86_64-glibc.tar.gz` è compilato su Ubuntu 20.04 (glibc
+2.31): funziona su Debian 11+, Ubuntu 20.04+, Fedora 33+, RHEL 9+, openSUSE Leap
+15.4+, Arch e derivate. Usa le librerie del sistema, quindi pesa meno del
+binario statico. Stessa procedura di installazione.
 
 ### Dal codice sorgente
 
@@ -71,7 +72,7 @@ include né GTK, né Qt, né WebKit.
 |---|---|---|
 | `libX11`/`libxkbcommon` oppure `libwayland` | finestra | non parte (obbligatorio) |
 | `libGL`/`libEGL` | disegno | non parte: prova `LIBGL_ALWAYS_SOFTWARE=1` |
-| `libasound` (ALSA) | altoparlanti e microfono | messaggi vocali e audio non suonano |
+| `libasound` (ALSA) | altoparlanti e microfono (già dentro il binario musl) | messaggi vocali e audio non suonano |
 | `ffmpeg`/`ffprobe` | decodifica audio/video, anteprime | apre i media col player di sistema |
 | `xdg-desktop-portal` + `zenity` | finestra "allega file" | si può indicare il percorso a mano |
 | `notify-send` | avvisi di sistema | nessun avviso, il resto funziona |

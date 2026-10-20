@@ -2,16 +2,18 @@ name: ci
 
 # Compila, prova e impacchetta Whats-Open per ogni distribuzione Linux.
 #
-#  * check      : feedback rapido su ubuntu-22.04
-#  * glibc      : binario dinamico compilato su Debian 11 (glibc 2.31),
+#  * check      : cargo check + cargo test su ubuntu-22.04 (feedback rapido)
+#  * glibc      : binario dinamico compilato su Ubuntu 20.04 (glibc 2.31),
 #                 compatibile con Debian 11+, Ubuntu 20.04+, Fedora 33+,
-#                 RHEL 9+, openSUSE, Arch e derivate
-#  * musl       : binario statico, gira su qualunque Linux (anche Alpine,
-#                 NixOS, distribuzioni senza glibc compatibile)
+#                 RHEL 9+, openSUSE Leap 15.4+, Arch e derivate
+#  * musl       : binario statico, gira su qualunque Linux (Alpine, NixOS,
+#                 distribuzioni con glibc più vecchia della 2.31, …).
+#                 alsa-lib viene compilata in versione statica nel job.
 #  * package    : tarball con binario, icone, .desktop e install.sh
 #
-# Gli errori di compilazione vengono pubblicati come commento sul commit:
-# i log delle Actions non sono sempre raggiungibili.
+# I log delle Actions non sono sempre scaricabili: in caso di errore gli ultimi
+# 60 KB finiscono in un commento sul commit, più qualche ::error:: come
+# annotazione. Vale per tutti i job.
 
 on:
   push:
@@ -63,7 +65,6 @@ jobs:
           set +e
           cat check.log test.log 2>/dev/null > errors.log
           test -s errors.log || exit 0
-          # prime righe come annotazione, poi il log completo nel commento
           grep -E "^(error|warning: unused)" errors.log | head -20 | while IFS= read -r line; do
             echo "::error::$line"
           done
@@ -71,37 +72,32 @@ jobs:
           gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
 
   glibc:
-    name: build glibc (Debian 11)
+    name: build glibc (Ubuntu 20.04)
     needs: check
     runs-on: ubuntu-22.04
-    container: debian:11
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     steps:
+      - uses: actions/checkout@v4
+
       - name: Strumenti
         run: |
-          apt-get update
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update > tools.log 2>&1
           apt-get install -y --no-install-recommends \
-            curl ca-certificates build-essential pkg-config git \
+            curl ca-certificates build-essential pkg-config git jq \
             libasound2-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libgl1-mesa-dev libegl1-mesa-dev libssl-dev
-
-      - uses: actions/checkout@v4
+            libgl1-mesa-dev libegl1-mesa-dev libssl-dev >> tools.log 2>&1 \
+            || { tail -30 tools.log | sed 's/^/::error::/'; exit 1; }
 
       - name: Toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: glibc-${{ github.sha }}
-          restore-keys: glibc-
 
       - name: cargo build --release
         run: |
@@ -116,9 +112,20 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set +e
-          test -s build.log || exit 0
-          tail -c 60000 build.log | jq -Rs '{body: .}' > body.json
-          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+          tail -c 60000 tools.log build.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          tail -20 errors.log | sed 's/^/::error::/'
+          jq -Rs '{body: .}' errors.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
+
+      - name: Verifica
+        run: |
+          file target/release/whats-open
+          ldd target/release/whats-open | head -5
 
       - uses: actions/upload-artifact@v4
         with:
@@ -130,15 +137,41 @@ jobs:
     name: build musl (statico)
     needs: check
     runs-on: ubuntu-22.04
-    container: alpine:3.20
+    container: alpine:3.22
+    defaults:
+      run:
+        shell: sh
     steps:
+      - uses: actions/checkout@v4
+
       - name: Strumenti
         run: |
           apk add --no-cache \
-            build-base musl-dev pkgconf git curl ca-certificates tar gzip \
-            alsa-lib-dev alsa-lib-static linux-headers
+            build-base musl-dev pkgconf git curl ca-certificates tar gzip jq \
+            autoconf automake libtool linux-headers > tools.log 2>&1 \
+            || { tail -30 tools.log | sed 's/^/::error::/'; exit 1; }
 
-      - uses: actions/checkout@v4
+      - name: alsa-lib statica
+        run: |
+          set -e
+          cd /tmp
+          curl -sSfL -o alsa.tgz \
+            https://codeload.github.com/alsa-project/alsa-lib/tar.gz/refs/tags/v1.2.14
+          tar xzf alsa.tgz
+          cd alsa-lib-1.2.14
+          if ! autoreconf -fi > /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::autoreconf /'; exit 1
+          fi
+          if ! ./configure --prefix=/usr/local --disable-shared --enable-static \
+                --disable-python >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::configure /'; exit 1
+          fi
+          if ! make -j"$(nproc)" >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::make /'; exit 1
+          fi
+          if ! make install >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::install /'; exit 1
+          fi
 
       - name: Toolchain
         run: |
@@ -146,20 +179,12 @@ jobs:
             | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: musl-${{ github.sha }}
-          restore-keys: musl-
-
       - name: cargo build --release (musl)
+        env:
+          PKG_CONFIG_ALL_STATIC: "1"
         run: |
-          set -o pipefail
-          cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tee build.log
+          cargo build --release --target x86_64-unknown-linux-musl > build.log 2>&1 \
+            || { tail -60 build.log | sed 's/^/::error::/'; exit 1; }
 
       - name: Pubblica gli errori sul commit
         if: failure()
@@ -169,14 +194,21 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set +e
-          test -s build.log || exit 0
-          tail -c 60000 build.log | jq -Rs '{body: .}' > body.json
-          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+          tail -c 60000 tools.log /tmp/alsa.log build.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          jq -Rs '{body: .}' errors.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
 
       - name: Verifica che sia davvero statico
         run: |
-          apk add --no-cache file
-          file target/x86_64-unknown-linux-musl/release/whats-open
+          file target/x86_64-unknown-linux-musl/release/whats-open > file.log 2>&1 || true
+          cat file.log
+          grep -q "statically linked" file.log \
+            || { echo "::error::il binario musl non è statico"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -187,7 +219,6 @@ jobs:
   package:
     name: pacchetto
     needs: [glibc, musl]
-    if: always() && needs.glibc.result == 'success'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -201,18 +232,17 @@ jobs:
         with:
           name: whats-open-musl
           path: staging/musl
-        continue-on-error: true
 
       - name: Icone
         run: |
-          python3 -m pip install --quiet pillow
+          python3 -m pip install --quiet pillow \
+            || python3 -m pip install --quiet --break-system-packages pillow
           python3 dist/icon-gen.py dist/whats-open.png
 
       - name: Tarball
         run: |
           set -e
           for flavor in glibc musl; do
-            [ -f "staging/$flavor/whats-open" ] || continue
             root="pkg/whats-open-0.1.0-linux-x86_64-$flavor"
             mkdir -p "$root/bin" "$root/share/applications" "$root/share/icons/hicolor"
             install -m755 "staging/$flavor/whats-open" "$root/bin/whats-open"
@@ -223,8 +253,9 @@ jobs:
               install -m644 "dist/icons/whats-open-$size.png" "$dir/whats-open.png"
             done
             install -m755 packaging/install.sh "$root/install.sh"
-            install -m644 README.md LICENSE "$root/" 2>/dev/null || install -m644 README.md "$root/"
-            tar -C pkg -czf "whats-open-linux-x86_64-$flavor.tar.gz" "whats-open-0.1.0-linux-x86_64-$flavor"
+            install -m644 README.md LICENSE "$root/"
+            tar -C pkg -czf "whats-open-linux-x86_64-$flavor.tar.gz" \
+              "whats-open-0.1.0-linux-x86_64-$flavor"
           done
           ls -lh *.tar.gz
 
