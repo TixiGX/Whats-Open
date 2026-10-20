@@ -392,7 +392,12 @@ pub fn new_session() -> SharedCall {
 
 /// Evento `<call>` in arrivo: offerta (squilla) oppure fine anticipata da
 /// parte di chi chiama.
-pub async fn on_incoming(call: IncomingCall, state: &SharedCall, sink: &EventSink) {
+pub async fn on_incoming(
+    client: Arc<Client>,
+    call: IncomingCall,
+    state: &SharedCall,
+    sink: &EventSink,
+) {
     let peer = call.from.to_string();
     match &call.action {
         CallAction::Offer { is_video, .. } => {
@@ -400,9 +405,10 @@ pub async fn on_incoming(call: IncomingCall, state: &SharedCall, sink: &EventSin
             {
                 let mut session = state.lock().await;
                 if session.incoming.is_some() || session.handle.is_some() {
-                    // Già in una chiamata: rifiuta la seconda come "occupato".
+                    // Già in una chiamata: la seconda va rifiutata davvero,
+                    // altrimenti il chiamante continua a sentire lo squillo.
                     drop(session);
-                    let _ = call;
+                    let _ = client.voip().reject(&call).await;
                     return;
                 }
                 session.incoming = Some(call);
@@ -458,7 +464,11 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
     let audio = match start() {
         Ok(audio) => audio,
         Err(err) => {
-            emit(&sink, Event::Fatal(format!("Audio chiamata: {err}")));
+            log::warn!("audio chiamata in arrivo: {err}");
+            emit(
+                &sink,
+                Event::Notice(format!("Chiamata rifiutata: {err}")),
+            );
             let _ = client.voip().reject(&incoming).await;
             let mut session = state.lock().await;
             session.incoming = None;
@@ -500,7 +510,7 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
                 session.peer = peer.clone();
                 session.video = video;
             }
-            monitor(state, sink, peer, video).await;
+            monitor(state, sink, peer, video, false).await;
         }
         Err(err) => {
             log::warn!("accettazione chiamata: {err}");
@@ -531,10 +541,22 @@ pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall
     let audio = match start() {
         Ok(audio) => audio,
         Err(err) => {
-            emit(&sink, Event::Fatal(format!("Audio chiamata: {err}")));
+            log::warn!("audio chiamata in uscita: {err}");
+            // Microfono o casse non disponibili: si dice e si chiude, senza
+            // lasciare a schermo una chiamata che non esiste.
+            emit(
+                &sink,
+                Event::Call {
+                    phase: CallPhase::Ended,
+                    peer: chat,
+                    video: false,
+                },
+            );
+            emit(&sink, Event::Notice(format!("Chiamata non avviata: {err}")));
             return;
         }
     };
+    // Il pannello compare solo adesso: prima non c'è nessuna chiamata.
     emit(
         &sink,
         Event::Call {
@@ -559,7 +581,7 @@ pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall
                 session.video = false;
                 session.active = false;
             }
-            monitor(state, sink, chat, false).await;
+            monitor(state, sink, chat, false, true).await;
         }
         Err(err) => {
             log::warn!("chiamata in uscita: {err}");
@@ -581,13 +603,17 @@ pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall
 
 /// Sorveglia la chiamata attiva: segnala quando il media è collegato e
 /// quando la chiamata finisce (per qualsiasi motivo).
-async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool) {
+async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, outgoing: bool) {
     let handle = { state.lock().await.handle.clone() };
     let Some(handle) = handle else {
         return;
     };
     let events = handle.events();
     let mut announced = false;
+    // Squillo senza risposta: oltre questo tempo la chiamata si chiude da
+    // sola, invece di restare appesa per sempre a "sto chiamando…".
+    let deadline = tokio::time::sleep(Duration::from_secs(50));
+    tokio::pin!(deadline);
     loop {
         tokio::select! {
             event = events.recv() => {
@@ -599,11 +625,34 @@ async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool) 
                             emit(&sink, Event::Call { phase: CallPhase::Active, peer: peer.clone(), video });
                         }
                     }
+                    Ok(CallEvent::RelayAllocateFailed(code)) => {
+                        log::warn!("relay rifiutato: {code}");
+                        emit(&sink, Event::Notice("La chiamata non è partita (rete)".into()));
+                        break;
+                    }
+                    Ok(CallEvent::RelayAllocateTimedOut) | Ok(CallEvent::RelayReconnectTimedOut) => {
+                        emit(&sink, Event::Notice("Chiamata interrotta: relay non raggiungibile".into()));
+                        break;
+                    }
                     Ok(_) => {}
-                    Err(_) => {}
+                    // Canale chiuso: la chiamata è finita, inutile restare qui.
+                    Err(_) => break,
                 }
             }
             _ = handle.wait_ended() => break,
+            _ = &mut deadline, if !announced => {
+                log::info!("nessuna risposta dopo 50 s: chiudo la chiamata");
+                handle.hangup().await;
+                emit(
+                    &sink,
+                    Event::Notice(if outgoing {
+                        "Nessuna risposta".into()
+                    } else {
+                        "Connessione non riuscita".into()
+                    }),
+                );
+                break;
+            }
         }
     }
     {

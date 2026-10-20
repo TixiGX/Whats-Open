@@ -162,7 +162,7 @@ impl App {
                                 .size(14.0)
                                 .color(Palette::TEXT),
                         );
-                        let subtitle = if chat.typing {
+                        let mut subtitle = if chat.typing {
                             "sta scrivendo…".to_string()
                         } else if chat.is_group {
                             if chat.online {
@@ -177,6 +177,16 @@ impl App {
                         } else {
                             String::new()
                         };
+                        // Il numero accanto al nome aiuta a riconoscere chi
+                        // non è ancora in rubrica (o è salvato con un altro nome).
+                        let line = phone_line(&chat.id);
+                        if !chat.is_group && !line.is_empty() && title != line {
+                            if subtitle.is_empty() {
+                                subtitle = line;
+                            } else {
+                                subtitle = format!("{subtitle} · {line}");
+                            }
+                        }
                         ui.label(
                             RichText::new(subtitle)
                                 .size(11.0)
@@ -189,19 +199,22 @@ impl App {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::icons::Icon::Phone
-                            .button(
-                                ui,
-                                30.0,
-                                if in_call { Palette::FAINT } else { Palette::MUTED },
-                            )
-                            .on_hover_text(if in_call {
-                                "Chiamata in corso"
-                            } else {
-                                "Chiamata vocale"
-                            })
-                            .clicked()
-                        {
+                        let color = if chat.is_group || in_call {
+                            Palette::FAINT
+                        } else {
+                            Palette::MUTED
+                        };
+                        let hover = if chat.is_group {
+                            "Le chiamate di gruppo non sono supportate"
+                        } else if in_call {
+                            "Chiamata in corso"
+                        } else {
+                            "Chiamata vocale"
+                        };
+                        let response = crate::icons::Icon::Phone
+                            .button(ui, 30.0, color)
+                            .on_hover_text(hover);
+                        if response.clicked() && !chat.is_group && !in_call {
                             place_call = true;
                         }
                     });
@@ -454,11 +467,7 @@ impl App {
                         self.actions.push(Action::RevealOnce(index));
                     }
                 } else if bubble.view_once && bubble.played && bubble.text.is_empty() {
-                    ui.label(
-                        RichText::new("Messaggio · una volta · già aperto")
-                            .size(12.5)
-                            .color(muted),
-                    );
+                    self.once_seen_label(ui, Kind::Text, muted);
                 } else if !bubble.text.is_empty() {
                     ui.label(
                         RichText::new(&bubble.text)
@@ -488,8 +497,10 @@ impl App {
             Kind::Image => {
                 if bubble.view_once && !bubble.played {
                     if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
-                        self.actions.push(Action::OpenImage(index));
+                        self.actions.push(Action::RevealOnce(index));
                     }
+                } else if bubble.view_once && bubble.played {
+                    self.once_seen_label(ui, bubble.kind, muted);
                 } else if let Some(texture) = self.thumb_texture(index) {
                     let size = fit_size(texture.size_vec2(), 268.0, 320.0);
                     let image = ui.add(
@@ -507,8 +518,10 @@ impl App {
             Kind::Video | Kind::Gif => {
                 if bubble.view_once && !bubble.played {
                     if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
-                        self.actions.push(Action::OpenVideo(index));
+                        self.actions.push(Action::RevealOnce(index));
                     }
+                } else if bubble.view_once && bubble.played {
+                    self.once_seen_label(ui, bubble.kind, muted);
                 } else if let Some(texture) = self.thumb_texture(index) {
                     let size = fit_size(texture.size_vec2(), 268.0, 320.0);
                     let response = ui.add(
@@ -554,9 +567,11 @@ impl App {
             }
             Kind::Voice | Kind::Audio if bubble.view_once && !bubble.played => {
                 if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
-                    self.actions.push(Action::PlayAudio(index));
                     self.actions.push(Action::RevealOnce(index));
                 }
+            }
+            Kind::Voice | Kind::Audio if bubble.view_once && bubble.played => {
+                self.once_seen_label(ui, bubble.kind, muted);
             }
             Kind::Voice => {
                 let playing = self
@@ -684,13 +699,54 @@ impl App {
     }
 
     fn view_once_tile(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         index: usize,
         kind: Kind,
         text_color: Color32,
         muted: Color32,
     ) -> bool {
+        // Foto e video mostrano la miniatura vera, velata: si capisce cosa
+        // c'è senza aprirlo (e senza scaricarlo).
+        let preview = match kind {
+            Kind::Image | Kind::Video | Kind::Gif => self.thumb_texture(index),
+            _ => None,
+        };
+        if let Some(texture) = preview {
+            let size = fit_size(texture.size_vec2(), 252.0, 300.0);
+            let response = ui.add(
+                egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
+                    .corner_radius(10)
+                    .sense(Sense::click()),
+            );
+            let rect = response.rect;
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(10), Color32::from_black_alpha(90));
+            let center = rect.center();
+            ui.painter()
+                .circle_filled(center, 21.0, Color32::from_black_alpha(150));
+            crate::icons::Icon::Lock.paint(
+                ui,
+                egui::Rect::from_center_size(center, Vec2::splat(19.0)),
+                Color32::WHITE,
+            );
+            ui.painter().text(
+                egui::Pos2::new(rect.left() + 10.0, rect.bottom() - 12.0),
+                egui::Align2::LEFT_CENTER,
+                if kind == Kind::Image {
+                    "Foto · apri una volta"
+                } else {
+                    "Video · apri una volta"
+                },
+                egui::FontId::proportional(10.5),
+                Color32::WHITE,
+            );
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            return response.clicked();
+        }
+
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(224.0, 74.0), Sense::click());
         let fill = if text_color == Palette::OWN_TEXT {
@@ -714,23 +770,14 @@ impl App {
         ui.painter().text(
             egui::Pos2::new(rect.left() + 58.0, rect.center().y - 8.0),
             egui::Align2::LEFT_CENTER,
-            match kind {
-                Kind::Video | Kind::Gif => "Video · una volta",
-                Kind::Voice | Kind::Audio => "Vocale · una volta",
-                Kind::Text => "Messaggio · una volta",
-                _ => "Foto · una volta",
-            },
+            once_title(kind),
             egui::FontId::proportional(12.5),
             text_color,
         );
         ui.painter().text(
             egui::Pos2::new(rect.left() + 58.0, rect.center().y + 10.0),
             egui::Align2::LEFT_CENTER,
-            match kind {
-                Kind::Voice | Kind::Audio => "Tocca per ascoltare",
-                Kind::Text => "Tocca per leggere",
-                _ => "Tocca per aprire",
-            },
+            once_hint(kind),
             egui::FontId::proportional(10.5),
             muted,
         );
@@ -738,8 +785,17 @@ impl App {
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        let _ = index;
         response.clicked()
+    }
+
+    /// Riga per un contenuto "una volta sola" già aperto.
+    fn once_seen_label(&self, ui: &mut egui::Ui, kind: Kind, muted: Color32) {
+        ui.label(
+            RichText::new(format!("{} · già aperto", once_title(kind)))
+                .size(12.0)
+                .italics()
+                .color(muted),
+        );
     }
 
     fn missing_media_ui(
@@ -859,7 +915,7 @@ impl App {
 
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut self.composer)
-                            .hint_text("Scrivi un messaggio")
+                            .hint_text("Scrivi un messaggio · Invio per inviare")
                             .desired_width(f32::INFINITY)
                             .desired_rows(1)
                             .frame(
@@ -1133,6 +1189,33 @@ impl App {
         let ctx = self.ctx.clone();
         self.gfx.insert(&ctx, key.clone(), image, false);
         self.gfx.get(&key)
+    }
+}
+
+/// Numero leggibile di un JID, quando il JID è un numero.
+fn phone_line(jid: &str) -> String {
+    let user = util::jid_user(jid);
+    if !user.is_empty() && user.chars().all(|c| c.is_ascii_digit()) {
+        util::phone_display(&user)
+    } else {
+        String::new()
+    }
+}
+
+fn once_title(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Video | Kind::Gif => "Video · una volta",
+        Kind::Voice | Kind::Audio => "Vocale · una volta",
+        Kind::Text => "Messaggio · una volta",
+        _ => "Foto · una volta",
+    }
+}
+
+fn once_hint(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Voice | Kind::Audio => "Tocca per ascoltare",
+        Kind::Text => "Tocca per leggere",
+        _ => "Tocca per aprire",
     }
 }
 

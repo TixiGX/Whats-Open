@@ -616,7 +616,7 @@ async fn command_loop(
                                 emoji: if emoji.is_empty() { None } else { Some(emoji) },
                             },
                         ),
-                        Err(err) => emit(&sink, Event::Fatal(format!("Reazione: {err}"))),
+                        Err(err) => emit(&sink, Event::Notice(format!("Reazione non inviata: {err}"))),
                     }
                 });
             }
@@ -628,7 +628,7 @@ async fn command_loop(
                     match client.edit_message(&jid, id.clone(), wa::Message::text(text.clone())).await
                     {
                         Ok(_) => emit(&sink, Event::Edited { chat, id, text }),
-                        Err(err) => emit(&sink, Event::Fatal(format!("Modifica: {err}"))),
+                        Err(err) => emit(&sink, Event::Notice(format!("Modifica non inviata: {err}"))),
                     }
                 });
             }

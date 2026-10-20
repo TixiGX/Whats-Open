@@ -109,6 +109,26 @@ pub fn build(
 ) -> Message {
     let base = message.get_base_message();
 
+    // "Una volta sola" arriva in due modi: un contenitore (view-once message,
+    // V2 o V2-Extension) oppure un flag dentro il media stesso. Il secondo è
+    // quello che usano gli allegati e i vocali: senza, restano bolle normali.
+    let view_once_flag = message.is_view_once()
+        || base
+            .image_message
+            .as_option()
+            .and_then(|image| image.view_once)
+            .unwrap_or(false)
+        || base
+            .video_message
+            .as_option()
+            .and_then(|video| video.view_once)
+            .unwrap_or(false)
+        || base
+            .audio_message
+            .as_option()
+            .and_then(|audio| audio.view_once)
+            .unwrap_or(false);
+
     let mut out = Message {
         id: String::new(),
         chat_id: chat,
@@ -117,7 +137,7 @@ pub fn build(
         from_me,
         ts,
         status: Status::Sent,
-        view_once: message.is_view_once(),
+        view_once: view_once_flag,
         // Salvo il contenuto già srotolato: i wrapper (view-once, effimero,
         // device-sent) non servono più e un download diretto funziona anche
         // se in futuro cambiassero i livelli di annidamento.
@@ -372,4 +392,91 @@ pub fn from_history(chat: &str, entry: &wa::WebMessageInfo) -> Option<Message> {
     out.id = id;
     out.status = Status::Read;
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whatsapp_rust::prelude::MessageField;
+
+    fn build_of(message: &wa::Message) -> Message {
+        build(
+            message,
+            "393330000000@s.whatsapp.net".to_string(),
+            "393331111111@s.whatsapp.net".to_string(),
+            "Prova".to_string(),
+            false,
+            1_700_000_000,
+        )
+    }
+
+    #[test]
+    fn una_foto_una_volta_si_riconosce_dal_flag_del_media() {
+        let mut image = wa::message::ImageMessage::default();
+        image.view_once = Some(true);
+        image.caption = Some("segreto".to_string());
+        let message = wa::Message {
+            image_message: MessageField::some(image),
+            ..Default::default()
+        };
+        let built = build_of(&message);
+        assert_eq!(built.kind, Kind::Image);
+        assert!(built.view_once);
+        assert_eq!(built.text, "segreto");
+    }
+
+    #[test]
+    fn un_vocale_una_volta_si_riconosce_dal_flag_del_media() {
+        let mut audio = wa::message::AudioMessage::default();
+        audio.ptt = Some(true);
+        audio.view_once = Some(true);
+        audio.seconds = Some(4);
+        let message = wa::Message {
+            audio_message: MessageField::some(audio),
+            ..Default::default()
+        };
+        let built = build_of(&message);
+        assert_eq!(built.kind, Kind::Voice);
+        assert!(built.view_once);
+        assert_eq!(built.duration, 4);
+    }
+
+    #[test]
+    fn il_contenitore_una_volta_viene_srotolato() {
+        let mut video = wa::message::VideoMessage::default();
+        video.seconds = Some(7);
+        let inner = wa::Message {
+            video_message: MessageField::some(video),
+            ..Default::default()
+        };
+        let wrapper = wa::message::FutureProofMessage {
+            message: MessageField::some(inner),
+            ..Default::default()
+        };
+        let message = wa::Message {
+            view_once_message_v2: MessageField::some(wrapper),
+            ..Default::default()
+        };
+        let built = build_of(&message);
+        assert_eq!(built.kind, Kind::Video);
+        assert!(built.view_once);
+        assert_eq!(built.duration, 7);
+        // Il payload conserva il contenuto già srotolato: il download
+        // funziona anche senza rifare il giro dei contenitori.
+        let decoded = codec::message_decode(&built.payload).expect("payload leggibile");
+        assert!(decoded.video_message.is_set());
+    }
+
+    #[test]
+    fn una_gif_resta_una_gif() {
+        let mut video = wa::message::VideoMessage::default();
+        video.gif_playback = Some(true);
+        let message = wa::Message {
+            video_message: MessageField::some(video),
+            ..Default::default()
+        };
+        let built = build_of(&message);
+        assert_eq!(built.kind, Kind::Gif);
+        assert!(!built.view_once);
+    }
 }

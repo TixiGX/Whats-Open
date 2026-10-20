@@ -3,6 +3,7 @@
 //! Il database della sessione (credenziali, chiavi) è separato: lo gestisce la
 //! libreria del protocollo in `session.db`. Qui vivono solo i dati visibili.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -76,6 +77,13 @@ CREATE TABLE IF NOT EXISTS contacts (
     avatar    BLOB,
     avatar_ts INTEGER NOT NULL DEFAULT 0,
     checked   INTEGER NOT NULL DEFAULT 0
+);
+
+-- Lo stesso contatto ha due indirizzi (numero e LID). La mappatura va
+-- ricordata: senza, a ogni avvio chat, nomi e foto si sdoppiano.
+CREATE TABLE IF NOT EXISTS aliases (
+    lid TEXT PRIMARY KEY,
+    pn  TEXT NOT NULL
 );
 "#;
 
@@ -227,9 +235,6 @@ impl Store {
             )
             .optional()?
             .unwrap_or(0);
-        if exists == 0 {
-            return Ok(());
-        }
         let target: i64 = self
             .conn
             .query_row(
@@ -239,14 +244,18 @@ impl Store {
             )
             .optional()?
             .unwrap_or(0);
-        if target > 0 {
-            // Destinazione già presente: la vecchia riga è un doppione.
-            self.conn
-                .execute("DELETE FROM chats WHERE id = ?1", params![old_id])?;
-        } else {
-            self.conn
-                .execute("UPDATE chats SET id = ?2 WHERE id = ?1", params![old_id, new_id])?;
+        if exists > 0 {
+            if target > 0 {
+                // Destinazione già presente: la vecchia riga è un doppione.
+                self.conn
+                    .execute("DELETE FROM chats WHERE id = ?1", params![old_id])?;
+            } else {
+                self.conn
+                    .execute("UPDATE chats SET id = ?2 WHERE id = ?1", params![old_id, new_id])?;
+            }
         }
+        // I messaggi si spostano anche quando la chat non c'è (storico
+        // importato prima che la mappatura fosse nota).
         self.conn.execute(
             "UPDATE OR IGNORE messages SET chat_id = ?2 WHERE chat_id = ?1",
             params![old_id, new_id],
@@ -561,7 +570,9 @@ impl Store {
 
     pub fn wipe(&self) -> Result<()> {
         self.conn
-            .execute_batch("DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts;")
+            .execute_batch(
+                "DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts; DELETE FROM aliases;",
+            )
             .context("svuotamento archivio")?;
         Ok(())
     }
@@ -652,6 +663,70 @@ impl Store {
             params![jid, phone],
         )?;
         Ok(())
+    }
+
+    pub fn save_alias(&self, lid: &str, pn: &str) -> Result<()> {
+        if lid.is_empty() || pn.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO aliases (lid, pn) VALUES (?1, ?2)
+             ON CONFLICT(lid) DO UPDATE SET pn = ?2",
+            params![lid, pn],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_aliases(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT lid, pn FROM aliases")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Recupera i nomi già visti nei messaggi archiviati: è la sincronizzazione
+    /// più economica che esista (una query, nessuna rete) e riporta i nomi
+    /// anche dopo un riavvio o una sessione senza storico.
+    pub fn backfill_names(&self, aliases: &HashMap<String, String>) -> Result<usize> {
+        let mut stmt = self.conn.prepare(
+            "SELECT sender, sender_name, COUNT(*) AS n
+               FROM messages
+              WHERE from_me = 0 AND sender_name <> ''
+              GROUP BY sender, sender_name
+              ORDER BY n DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+            ))
+        })?;
+        let mut seen: HashMap<String, String> = HashMap::new();
+        for row in rows {
+            let (sender, name) = row?;
+            let name = name.trim().to_string();
+            if sender.is_empty() || name.is_empty() || crate::util::jid_is_group(&sender) {
+                continue;
+            }
+            let jid = aliases.get(&sender).cloned().unwrap_or(sender);
+            seen.entry(jid).or_insert(name);
+        }
+        let mut learned = 0usize;
+        for (jid, name) in seen {
+            if crate::util::looks_like_phone(&name) {
+                if self.set_contact_phone(&jid, name.trim_start_matches('+')).is_ok() {
+                    learned += 1;
+                }
+            } else if self.set_contact_name(&jid, &name, 1).is_ok() {
+                learned += 1;
+            }
+        }
+        Ok(learned)
     }
 
     /// Salva la foto profilo. `bytes` vuoto = nessuna foto disponibile: la
@@ -777,6 +852,58 @@ mod tests {
         let removed = store.delete_expired(30).unwrap();
         assert_eq!(removed, vec!["v1".to_string()]);
         assert!(store.load_messages("e@s.whatsapp.net", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn i_messaggi_seguono_l_alias_anche_senza_chat() {
+        let store = temp_store("alias-messaggi");
+        store
+            .insert_message(&message("111@lid", "m1", 10, "ciao"))
+            .unwrap();
+        store
+            .rename_jid("111@lid", "393330000000@s.whatsapp.net")
+            .unwrap();
+        let loaded = store.load_messages("393330000000@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(store.load_messages("111@lid", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn gli_alias_sopravvivono_al_riavvio() {
+        let store = temp_store("alias");
+        store.save_alias("111@lid", "393330000000@s.whatsapp.net").unwrap();
+        let loaded = store.load_aliases().unwrap();
+        assert_eq!(
+            loaded,
+            vec![(
+                "111@lid".to_string(),
+                "393330000000@s.whatsapp.net".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn i_nomi_si_recuperano_dai_messaggi() {
+        let mut store = temp_store("nomi");
+        let mut first = message("393330000000@s.whatsapp.net", "n1", 10, "ciao");
+        first.sender_name = "Mamma".to_string();
+        let mut second = message("393330000000@s.whatsapp.net", "n2", 11, "di nuovo");
+        second.sender_name = "Mamma".to_string();
+        store.insert_messages(&[first, second]).unwrap();
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "111@lid".to_string(),
+            "393330000000@s.whatsapp.net".to_string(),
+        );
+        store.backfill_names(&aliases).unwrap();
+
+        let contacts = store.load_contacts().unwrap();
+        let contact = contacts
+            .iter()
+            .find(|contact| contact.jid == "393330000000@s.whatsapp.net")
+            .expect("contatto creato dai messaggi");
+        assert_eq!(contact.name, "Mamma");
     }
 
     #[test]

@@ -155,7 +155,7 @@ pub async fn handle(
             });
         }
         WaEvent::IncomingCall(call) => {
-            call::on_incoming(call.clone(), &calls, &sink).await;
+            call::on_incoming(client.clone(), call.clone(), &calls, &sink).await;
         }
         WaEvent::MissedCall(call) => {
             call::missed(call, &sink);
@@ -348,6 +348,39 @@ fn import_history(
     for mapping in history.phone_number_to_lid_mappings.iter() {
         if let (Some(pn), Some(lid)) = (mapping.pn_jid.as_ref(), mapping.lid_jid.as_ref()) {
             emit_alias(sink, &clean_jid(lid), &clean_jid(pn));
+        }
+    }
+    // Rubrica della rubrica del telefono: nome e cognome come li ha salvati
+    // l'utente. È la sorgente migliore che esista, e arriva con lo storico.
+    for contact in history.inline_contacts.iter() {
+        let pn = contact.pn_jid.as_deref().map(clean_jid);
+        let lid = contact.lid_jid.as_deref().map(clean_jid);
+        if let (Some(lid), Some(pn)) = (lid.as_deref(), pn.as_deref()) {
+            emit_alias(sink, lid, pn);
+        }
+        let jid = pn.clone().or_else(|| lid.clone());
+        let Some(jid) = jid else {
+            continue;
+        };
+        let full = contact
+            .full_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        let first = contact
+            .first_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        if let Some(name) = full.or(first) {
+            emit(
+                sink,
+                Event::Contact {
+                    jid,
+                    name: name.to_string(),
+                    rank: if full.is_some() { 3 } else { 2 },
+                },
+            );
         }
     }
 

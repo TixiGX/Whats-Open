@@ -118,7 +118,12 @@ impl App {
                     let selected = self.selected.as_deref() == Some(chat.id.as_str());
                     let typing = chat.typing;
                     let texture = self.avatars.get(&chat.id).cloned();
-                    if chat_row(ui, &chat, &title, texture.as_ref(), selected, typing).clicked() {
+                    // Numero sotto il nome quando il nome non è il numero:
+                    // senza rubrica i contatti si riconoscono solo così.
+                    let sub = secondary_line(&chat, &title);
+                    if chat_row(ui, &chat, &title, &sub, texture.as_ref(), selected, typing)
+                        .clicked()
+                    {
                         chosen = Some(chat.id.clone());
                     }
                     if texture.is_none() {
@@ -147,10 +152,28 @@ impl App {
     }
 }
 
+/// Seconda riga della lista quando non c'è un'anteprima: il numero, utile
+/// nelle chat appena aperte. Negli altri casi resta l'anteprima del messaggio.
+fn secondary_line(chat: &Chat, title: &str) -> String {
+    if !chat.preview.is_empty() {
+        return String::new();
+    }
+    let user = util::jid_user(&chat.id);
+    let is_number = !user.is_empty() && user.chars().all(|c| c.is_ascii_digit());
+    if !chat.is_group && is_number {
+        let phone = util::phone_display(&user);
+        if title != phone {
+            return phone;
+        }
+    }
+    String::new()
+}
+
 fn chat_row(
     ui: &mut egui::Ui,
     chat: &Chat,
     title: &str,
+    sub: &str,
     texture: Option<&egui::TextureHandle>,
     selected: bool,
     typing: bool,
@@ -190,26 +213,32 @@ fn chat_row(
     } else {
         Palette::TEXT
     };
+    // Caratteri che entrano davvero: il pannello è ridimensionabile.
+    let room = (rect.right() - 62.0 - text_left).max(90.0);
+    let title = util::truncate(title, (room / 7.0) as usize);
     painter.text(
         Pos2::new(text_left, rect.center().y - 10.0),
         Align2::LEFT_CENTER,
-        util::truncate(title, 26),
+        title,
         FontId::proportional(14.0),
         name_color,
     );
 
     let preview = if typing {
         "sta scrivendo…".to_string()
+    } else if !sub.is_empty() {
+        sub.to_string()
     } else if chat.preview.is_empty() {
         crate::ui::kind_glyph(crate::model::Kind::Text).to_string()
     } else {
         chat.preview.clone()
     };
     let preview_color = if typing { Palette::TEXT } else { Palette::MUTED };
+    let preview = util::truncate(&preview, (room / 6.1) as usize);
     painter.text(
         Pos2::new(text_left, rect.center().y + 11.0),
         Align2::LEFT_CENTER,
-        util::truncate(&preview, 34),
+        preview,
         FontId::proportional(12.0),
         preview_color,
     );

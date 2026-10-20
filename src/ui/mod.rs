@@ -181,6 +181,17 @@ impl App {
         let config = Config::load(&paths.data);
         crate::theme::apply(&cc.egui_ctx, config.system_fonts);
         let store = Store::open(&paths.db)?;
+        // La mappatura LID ↔ numero va ripresa da disco *prima* di leggere
+        // chat e contatti: è quella che tiene uniti i due indirizzi dello
+        // stesso contatto tra un avvio e l'altro.
+        let aliases: HashMap<String, String> = store
+            .load_aliases()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        if let Err(error) = store.backfill_names(&aliases) {
+            log::debug!("nomi dall'archivio: {error}");
+        }
         let chats = store.load_chats().unwrap_or_default();
         let contacts: HashMap<String, Contact> = store
             .load_contacts()
@@ -216,7 +227,7 @@ impl App {
             typing_last: Instant::now(),
             typing_until: HashMap::new(),
             contacts,
-            aliases: HashMap::new(),
+            aliases,
             avatars: HashMap::new(),
             avatar_asked: std::collections::HashSet::new(),
             avatar_budget: (Instant::now(), 0),
@@ -251,6 +262,17 @@ impl App {
             scroll_bottom: false,
             started: Instant::now(),
         };
+        app.sort_chats();
+        // Chat nate con indirizzamento LID: vanno unite a quelle del numero
+        // anche quando la mappatura arriva da un avvio precedente.
+        let pairs: Vec<(String, String)> = app
+            .aliases
+            .iter()
+            .map(|(lid, pn)| (lid.clone(), pn.clone()))
+            .collect();
+        for (lid, pn) in pairs {
+            app.merge_alias(&lid, &pn);
+        }
         app.sort_chats();
         app.begin_engine(None);
         Ok(app)
@@ -408,7 +430,15 @@ impl App {
             return;
         }
         self.aliases.insert(lid.to_string(), pn.to_string());
+        self.store.save_alias(lid, pn).ok();
+        self.merge_alias(lid, pn);
+    }
 
+    /// Fonde i dati dei due indirizzi: contatti, foto e chat.
+    fn merge_alias(&mut self, lid: &str, pn: &str) {
+        if lid.is_empty() || pn.is_empty() || lid == pn {
+            return;
+        }
         let phone = crate::util::jid_user(pn);
         let lid_contact = self.contacts.get(lid).cloned();
         let existing = self.contacts.get(pn).cloned();
@@ -522,10 +552,19 @@ impl App {
         if jid.is_empty() || self.avatars.contains_key(&jid) {
             return;
         }
-        if let Some(contact) = self.contacts.get(&jid) {
-            if contact.avatar.is_some() {
-                return;
+        // Foto già scaricata in una sessione precedente: la texture va
+        // ricreata al primo disegno, altrimenti dopo ogni avvio sparisce.
+        if let Some(bytes) = self
+            .contacts
+            .get(&jid)
+            .and_then(|contact| contact.avatar.clone())
+        {
+            self.ensure_avatar_texture(&jid, &bytes);
+            if !self.avatars.contains_key(&jid) {
+                // Bytes illeggibili: non riprovare a ogni fotogramma.
+                self.avatar_asked.insert(jid);
             }
+            return;
         }
         if self.avatar_asked.contains(&jid) {
             return;
@@ -610,15 +649,10 @@ impl App {
         let Some(engine) = self.engine.as_ref() else {
             return;
         };
+        // Nessuno stato inventato: il pannello compare quando il motore ha
+        // davvero aperto microfono e casse e sta mandando l'offerta.
         engine.send(Cmd::CallStart { chat: chat.clone() });
         let name = self.name_of(&chat);
-        self.call = Some(CallUi {
-            peer: chat,
-            phase: crate::engine::CallPhase::Dialing,
-            video: false,
-            since: Instant::now(),
-            muted: false,
-        });
         self.note(format!("Chiamata a {name}…"));
     }
 
@@ -1200,51 +1234,23 @@ impl App {
                     if message.played {
                         continue;
                     }
-                    // Prima si apre il contenuto, poi lo si consuma: i lettori
-                    // rifiutano ciò che risulta già visto.
-                    let pending_before = self.pending.len();
-                    if message.kind == Kind::Text {
-                        self.once_text = Some((
-                            message.chat_id.clone(),
-                            message.id.clone(),
-                            message.text.clone(),
-                        ));
-                    } else {
-                        match message.kind {
-                            Kind::Image | Kind::Sticker => self.open_image(index),
-                            Kind::Video | Kind::Gif => self.open_video(index),
-                            Kind::Voice | Kind::Audio => self.toggle_audio(index),
-                            Kind::Document => self.open_document(index),
-                            _ => self.download_message(index),
+                    // Il contenuto si apre con il suo lettore: il consumo
+                    // avviene quando è davvero a schermo (mark_played).
+                    match message.kind {
+                        Kind::Text => {
+                            self.once_text = Some((
+                                message.chat_id.clone(),
+                                message.id.clone(),
+                                message.text.clone(),
+                            ));
+                            self.mark_played(&message.id, true);
                         }
+                        Kind::Image | Kind::Sticker => self.open_image(index),
+                        Kind::Video | Kind::Gif => self.open_video(index),
+                        Kind::Voice | Kind::Audio => self.toggle_audio(index),
+                        Kind::Document => self.open_document(index),
+                        _ => self.download_message(index),
                     }
-                    let opened = match message.kind {
-                        Kind::Text => true,
-                        Kind::Voice | Kind::Audio => self
-                            .audio
-                            .as_ref()
-                            .map(|audio| audio.id == message.id)
-                            .unwrap_or(false),
-                        Kind::Video | Kind::Gif => self
-                            .video
-                            .as_ref()
-                            .map(|video| video.id == message.id)
-                            .unwrap_or(false),
-                        _ => {
-                            self.viewer.as_deref() == Some(message.id.as_str())
-                                || self.viewer_loading
-                                || self.pending.len() > pending_before
-                        }
-                    };
-                    if !opened {
-                        self.once_text = None;
-                        self.note("Contenuto non disponibile su questo dispositivo");
-                        continue;
-                    }
-                    // Il contenuto resta a schermo finché è aperto, ma non è
-                    // più riapribile né leggibile dall'archivio.
-                    self.mark_played(&message.id, true);
-                    self.store.consume_once(&message.chat_id, &message.id).ok();
                 }
                 Action::Reply(index) => {
                     if let Some(message) = self.messages.get(index).cloned() {
@@ -1359,6 +1365,15 @@ impl App {
                 None
             };
             self.store.set_played(&chat, id).ok();
+            // Un contenuto "una volta sola" viene consumato appena aperto:
+            // dopo non è più leggibile né dall'archivio né in memoria.
+            if message.view_once {
+                self.store.consume_once(&chat, id).ok();
+                message.text.clear();
+                message.payload.clear();
+                message.thumb = None;
+                message.local_preview = None;
+            }
             if send_receipt {
                 if let Some(engine) = self.engine.as_ref() {
                     engine.send(Cmd::Played {
@@ -1414,8 +1429,10 @@ impl eframe::App for App {
 
         if self.logged_in() {
             egui::Panel::left("chats")
-                .exact_size(322.0)
-                .resizable(false)
+                .default_size(322.0)
+                .min_size(248.0)
+                .max_size(430.0)
+                .resizable(true)
                 .frame(
                     egui::Frame::new()
                         .fill(Palette::PANEL)

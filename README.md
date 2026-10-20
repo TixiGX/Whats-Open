@@ -14,9 +14,13 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - Accesso con QR oppure con codice di accoppiamento (`--pair +39…`)
 - Chat singole e di gruppo, ricerca, anteprime, non letti, presenza e
   "sta scrivendo"
-- Testo, foto, video, documenti, sticker, posizioni e contatti
-- Foto, video e audio **view-once**: si aprono una sola volta, poi il contenuto
-  sparisce dalla cache locale
+- Testo, foto, video, documenti, GIF, sticker animati, posizioni e contatti
+- Foto, video e audio **view-once**: arrivano con la miniatura velata, si
+  aprono una sola volta e poi spariscono dalla cache e dall'archivio
+- **Chiamate vocali** (in arrivo, in uscita, mute, ricevute di squillo): una
+  videochiamata in arrivo si risponde in audio, il video non è ancora supportato
+- Nomi dei contatti dalla rubrica del telefono, dallo storico e dai messaggi già
+  archiviati; la mappatura LID ↔ numero resta anche dopo il riavvio
 - Note vocali: registrazione dal microfono (Ogg/Opus) e riproduzione con forma
   d'onda e avanzamento
 - Lettore video integrato con pausa e ricerca
@@ -27,8 +31,8 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - Istanza singola: la seconda copia riporta davanti la finestra già aperta
 - Log su file (con rotazione) e diagnostica integrata
 
-Non ci sono chiamate, storie o canali: l'obiettivo è un client leggero, non una
-copia di WhatsApp Web.
+Non ci sono storie, canali né videochiamate: l'obiettivo è un client leggero,
+non una copia di WhatsApp Web.
 
 ## Installazione
 

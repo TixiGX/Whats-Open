@@ -59,6 +59,11 @@ impl App {
             self.note("Questa foto è già stata aperta");
             return;
         }
+        // Un altro contenuto è aperto: chiuderlo lo consuma come farebbe
+        // l'utente con la X.
+        if self.viewer.as_deref() != Some(message.id.as_str()) {
+            self.close_viewer();
+        }
         let path = self.cache_path(&message);
         if path.exists() {
             if let Ok(bytes) = std::fs::read(&path) {
@@ -96,10 +101,16 @@ impl App {
             self.note("Questo video è già stato aperto");
             return;
         }
+        if self.video.as_ref().map(|video| video.id != message.id).unwrap_or(false) {
+            self.close_video();
+        }
         let path = self.cache_path(&message);
         if path.exists() {
             if self.config.system_player {
                 self.play_externally(&path);
+                if message.view_once {
+                    self.mark_played(&message.id, true);
+                }
                 return;
             }
             match VideoPlayer::open(&path) {
@@ -203,6 +214,9 @@ impl App {
         let path = self.cache_path(&message);
         if path.exists() {
             util::open_external(&path);
+            if message.view_once {
+                self.mark_played(&message.id, true);
+            }
             return;
         }
         self.request(
@@ -352,6 +366,17 @@ impl App {
                     }
                     util::open_external(path);
                 }
+                // Un documento "una volta sola" è finito sotto gli occhi
+                // dell'utente: da qui in poi è consumato.
+                if self
+                    .messages
+                    .iter()
+                    .find(|message| message.id == id)
+                    .map(|message| message.view_once)
+                    .unwrap_or(false)
+                {
+                    self.mark_played(&id, true);
+                }
                 self.note("Documento salvato nella cache");
             }
         }
@@ -463,17 +488,27 @@ impl App {
         let status = match phase {
             CallPhase::Ringing => {
                 if video {
-                    "Videochiamata in arrivo…"
+                    // Il video non è ancora supportato: si risponde in audio,
+                    // e lo si dice prima di accettare.
+                    "Videochiamata · risponderai in audio"
                 } else {
                     "Chiamata in arrivo…"
                 }
             }
             CallPhase::Dialing => "Sto chiamando…",
             CallPhase::Connecting => "Connessione…",
-            CallPhase::Active => "In chiamata",
+            CallPhase::Active => {
+                if video {
+                    "In chiamata · audio"
+                } else {
+                    "In chiamata"
+                }
+            }
             CallPhase::Ended => "Terminata",
         };
         let elapsed = since.elapsed().as_secs();
+        // La foto del contatto rende il pannello riconoscibile a colpo d'occhio.
+        let avatar = self.avatars.get(&peer).cloned();
 
         let mut accept = false;
         let mut reject = false;
@@ -491,12 +526,18 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(16, 12))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            crate::icons::Icon::Phone.paint(
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(34.0), egui::Sense::hover());
+                            super::widgets::avatar_tex(
                                 ui,
-                                egui::Rect::from_min_size(ui.cursor().min, Vec2::splat(20.0)),
-                                Palette::TEXT,
+                                rect,
+                                avatar.as_ref(),
+                                &title,
+                                &peer,
+                                false,
+                                false,
                             );
-                            ui.add_space(26.0);
+                            ui.add_space(6.0);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(&title).size(13.0).color(Palette::TEXT));
                                 let line = if phase == CallPhase::Active {
@@ -592,16 +633,17 @@ impl App {
     }
 
     fn close_viewer(&mut self) {
-        if self.view_view_once {
-            if let Some(id) = self.viewer.clone() {
+        if let Some(id) = self.viewer.clone() {
+            // Il flag del messaggio, non quello globale: evita di consumare
+            // per sbaglio la foto sbagliata.
+            let view_once = self
+                .messages
+                .iter()
+                .find(|message| message.id == id)
+                .map(|message| message.view_once)
+                .unwrap_or(false);
+            if view_once {
                 self.mark_played(&id, true);
-                if let Some(message) = self.messages.iter_mut().find(|message| message.id == id)
-                {
-                    message.played = true;
-                    message.payload.clear();
-                    message.thumb = None;
-                    message.local_preview = None;
-                }
                 if let Some(message) = self.messages.iter().find(|message| message.id == id) {
                     let path = self.cache_path(message);
                     let _ = std::fs::remove_file(path);
@@ -843,14 +885,14 @@ impl App {
         };
         let id = video.id.clone();
         drop(video);
-        if self.view_view_once {
+        let view_once = self
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .map(|message| message.view_once)
+            .unwrap_or(false);
+        if view_once {
             self.mark_played(&id, true);
-            if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
-                message.played = true;
-                message.payload.clear();
-                message.thumb = None;
-                message.local_preview = None;
-            }
             if let Some(message) = self.messages.iter().find(|message| message.id == id) {
                 let path = self.cache_path(message);
                 let _ = std::fs::remove_file(path);
@@ -920,6 +962,49 @@ impl App {
                             let _ = std::fs::create_dir_all(&self.paths.media);
                             self.gfx.clear();
                             self.note("Cache svuotata");
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Contatti")
+                            .size(11.0)
+                            .color(Palette::FAINT),
+                    );
+                    let named = self
+                        .contacts
+                        .values()
+                        .filter(|contact| !contact.name.trim().is_empty())
+                        .count();
+                    let total = self.chats.iter().filter(|chat| !chat.is_group).count();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{named} nomi in archivio · {total} chat dirette"
+                            ))
+                            .size(12.0)
+                            .color(Palette::MUTED),
+                        );
+                        if ui
+                            .small_button("Rileggi nomi")
+                            .on_hover_text(
+                                "Recupera i nomi già visti nei messaggi salvati (nessuna rete)",
+                            )
+                            .clicked()
+                        {
+                            let aliases = self.aliases.clone();
+                            let learned = self.store.backfill_names(&aliases).unwrap_or(0);
+                            self.contacts = self
+                                .store
+                                .load_contacts()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|contact| (contact.jid.clone(), contact))
+                                .collect();
+                            self.note(match learned {
+                                0 => "Nessun nome nuovo nell'archivio".to_string(),
+                                n => format!("{n} nomi recuperati"),
+                            });
                         }
                     });
 
