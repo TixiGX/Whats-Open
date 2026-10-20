@@ -21,7 +21,11 @@ jobs:
       - name: Installa
         run: |
           set -o pipefail
+          set -x
           export DEBIAN_FRONTEND=noninteractive
+          cat /etc/os-release
+          cat /etc/resolv.conf || true
+          getent hosts archive.ubuntu.com || true
           { apt-get update
             apt-get install -y --no-install-recommends \
               curl ca-certificates build-essential pkg-config git jq \
@@ -30,6 +34,15 @@ jobs:
               libgl1-mesa-dev libegl1-mesa-dev libssl-dev
             ldd --version | head -1
           } 2>&1 | tee tools.log
+
+      - name: Diagnosi
+        if: failure()
+        run: |
+          echo "::error::ultime righe del log di installazione"
+          tail -n 15 tools.log 2>/dev/null | while IFS= read -r line; do
+            line=$(printf '%s' "$line" | tr -d '\r')
+            echo "::error::$line"
+          done
 
       - name: Pubblica
         if: failure()
@@ -54,11 +67,24 @@ jobs:
       - name: Installa
         run: |
           set -o pipefail
+          set -x
+          cat /etc/os-release
+          cat /etc/resolv.conf || true
+          getent hosts dl-cdn.alpinelinux.org || true
           { apk add --no-cache \
               build-base musl-dev pkgconf git curl ca-certificates tar gzip jq \
               alsa-lib-dev alsa-lib-static linux-headers
             ldd --version | head -1
           } 2>&1 | tee tools.log
+
+      - name: Diagnosi
+        if: failure()
+        run: |
+          echo "::error::ultime righe del log di installazione"
+          tail -n 15 tools.log 2>/dev/null | while IFS= read -r line; do
+            line=$(printf '%s' "$line" | tr -d '\r')
+            echo "::error::$line"
+          done
 
       - name: Pubblica
         if: failure()
