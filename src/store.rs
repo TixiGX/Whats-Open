@@ -380,6 +380,19 @@ impl Store {
         Ok(inserted)
     }
 
+    /// Invii rimasti in sospeso da un avvio precedente: senza una risposta del
+    /// server non partiranno mai, quindi diventano "falliti" e si possono
+    /// riprovare. `before` è il limite di tempo (timestamp in secondi).
+    pub fn fail_stale_pending(&self, before: i64) -> usize {
+        self.conn
+            .execute(
+                "UPDATE messages SET status = 'failed'
+                  WHERE from_me = 1 AND status = 'pending' AND ts < ?1",
+                params![before],
+            )
+            .unwrap_or(0)
+    }
+
     /// Riapre un invio fallito: lo stato può tornare a `pending` solo da qui.
     pub fn retry_message(&self, chat_id: &str, message_id: &str) -> Result<()> {
         self.conn.execute(
@@ -852,6 +865,24 @@ mod tests {
         let removed = store.delete_expired(30).unwrap();
         assert_eq!(removed, vec!["v1".to_string()]);
         assert!(store.load_messages("e@s.whatsapp.net", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn gli_invii_rimasti_in_sospeso_diventano_falliti() {
+        let store = temp_store("sospesi");
+        let mut pending = message("i@s.whatsapp.net", "p1", 100, "in attesa");
+        pending.from_me = true;
+        pending.status = Status::Pending;
+        store.insert_message(&pending).unwrap();
+        let mut fresh = message("i@s.whatsapp.net", "p2", 500, "nuovo");
+        fresh.from_me = true;
+        fresh.status = Status::Pending;
+        store.insert_message(&fresh).unwrap();
+
+        assert_eq!(store.fail_stale_pending(200), 1);
+        let loaded = store.load_messages("i@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded[0].status, Status::Failed);
+        assert_eq!(loaded[1].status, Status::Pending);
     }
 
     #[test]

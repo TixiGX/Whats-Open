@@ -114,6 +114,11 @@ pub async fn handle(
                 emit_alias(&sink, &lid, &pn);
             }
         }
+        WaEvent::ContactSyncRequested(_) => {
+            // Non teniamo una rubrica da spedire: al massimo rileggiamo i
+            // nomi già archiviati, senza traffico di rete.
+            emit(&sink, Event::ContactSyncWanted);
+        }
         WaEvent::PushNameUpdate(update) => {
             if !update.new_push_name.trim().is_empty() {
                 emit(
@@ -416,7 +421,7 @@ fn import_history(
                     last_ts = message.ts;
                 }
                 if preview.is_empty() {
-                    preview = message.preview();
+                    preview = message.chat_preview();
                 }
                 messages.push(message);
                 budget -= 1;

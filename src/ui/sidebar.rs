@@ -81,13 +81,26 @@ impl App {
                         Palette::FAINT,
                     );
                     ui.add_space(19.0);
+                    let room = if self.search.is_empty() {
+                        ui.available_width()
+                    } else {
+                        (ui.available_width() - 26.0).max(80.0)
+                    };
                     ui.add(
                         egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("Cerca")
-                            .desired_width(f32::INFINITY)
+                            .hint_text("Cerca chat e contatti")
+                            .desired_width(room)
                             .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
                             .text_color(Palette::TEXT),
                     );
+                    if !self.search.is_empty()
+                        && crate::icons::Icon::Close
+                            .button(ui, 18.0, Palette::MUTED)
+                            .on_hover_text("Cancella la ricerca")
+                            .clicked()
+                    {
+                        self.search.clear();
+                    }
                 });
             });
         });

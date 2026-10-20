@@ -244,6 +244,23 @@ impl Message {
         util::truncate(&body.replace('\n', " "), 46)
     }
 
+    /// Anteprima per la lista chat: "Tu:" sui propri messaggi e il nome del
+    /// mittente nei gruppi, come fa WhatsApp.
+    pub fn chat_preview(&self) -> String {
+        let body = self.preview();
+        if body.is_empty() || self.deleted {
+            return body;
+        }
+        if self.from_me {
+            return format!("Tu: {body}");
+        }
+        let sender = self.sender_name.trim();
+        if !sender.is_empty() && crate::util::jid_is_group(&self.chat_id) {
+            return format!("{sender}: {body}");
+        }
+        body
+    }
+
     pub fn media_ext(&self) -> &'static str {
         match self.kind {
             Kind::Image => "jpg",
@@ -331,6 +348,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(doc.preview(), "contratto.pdf");
+        let mut own = text_message("ciao");
+        own.from_me = true;
+        assert_eq!(own.chat_preview(), "Tu: ciao");
+        let mut group = text_message("ciao");
+        group.chat_id = "120363000000000000@g.us".to_string();
+        group.sender_name = "Anna".to_string();
+        assert_eq!(group.chat_preview(), "Anna: ciao");
 
         let deleted = Message {
             deleted: true,

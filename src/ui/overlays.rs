@@ -992,15 +992,7 @@ impl App {
                             )
                             .clicked()
                         {
-                            let aliases = self.aliases.clone();
-                            let learned = self.store.backfill_names(&aliases).unwrap_or(0);
-                            self.contacts = self
-                                .store
-                                .load_contacts()
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|contact| (contact.jid.clone(), contact))
-                                .collect();
+                            let learned = self.refresh_names();
                             self.note(match learned {
                                 0 => "Nessun nome nuovo nell'archivio".to_string(),
                                 n => format!("{n} nomi recuperati"),

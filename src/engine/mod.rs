@@ -10,6 +10,7 @@ pub mod extract;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -150,6 +151,9 @@ pub enum Event {
     Avatar { jid: String, bytes: Option<Vec<u8>> },
     Call { phase: CallPhase, peer: String, video: bool },
     CallMissed { peer: String, video: bool },
+    /// Il telefono (o il server) ha chiesto di riallineare la rubrica: non
+    /// possiamo inviare la nostra, ma possiamo rileggere i nomi che abbiamo.
+    ContactSyncWanted,
     /// Avviso da mostrare all'utente senza interrompere nulla.
     Notice(String),
 }
@@ -288,6 +292,9 @@ fn run(
         let event_sink = sink.clone();
         let handler_groups = groups.clone();
         let handler_calls = call_state.clone();
+        // Il compito che tiene "non in linea" deve esistere una volta sola,
+        // anche se la connessione cade e torna.
+        let presence_task = Arc::new(AtomicBool::new(false));
 
         let mut builder = Bot::builder()
             .with_backend(store)
@@ -300,6 +307,7 @@ fn run(
             })
             .on_connected(move |client: Arc<Client>| {
                 let sink = connected_sink.clone();
+                let presence_task = presence_task.clone();
                 async move {
                     emit(&sink, Event::Connected);
                     emit(
@@ -318,14 +326,25 @@ fn run(
                     // messaggi risultano recapitati.
                     let client = client.clone();
                     tokio::spawn(async move {
+                        if presence_task.swap(true, Ordering::Relaxed) {
+                            return;
+                        }
                         client.set_force_active_delivery_receipts(true);
-                        for delay in [0u64, 1200, 4000] {
-                            if delay > 0 {
-                                tokio::time::sleep(Duration::from_millis(delay)).await;
-                            }
+                        // Le prime tre volte coprono connessione, sync del nome
+                        // e storico; poi si riallinea ogni due minuti, perché
+                        // la presenza scade da sola.
+                        let mut rounds = 0u32;
+                        loop {
                             if let Err(err) = client.presence().set_unavailable().await {
                                 log::debug!("presence unavailable: {err}");
                             }
+                            rounds += 1;
+                            let wait = match rounds {
+                                1 => Duration::from_millis(1_200),
+                                2 => Duration::from_millis(4_000),
+                                _ => Duration::from_secs(120),
+                            };
+                            tokio::time::sleep(wait).await;
                         }
                     });
                 }

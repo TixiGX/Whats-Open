@@ -192,6 +192,9 @@ impl App {
         if let Err(error) = store.backfill_names(&aliases) {
             log::debug!("nomi dall'archivio: {error}");
         }
+        // Invii interrotti dall'ultima chiusura: si mostrano come falliti
+        // (con "riprova") invece di restare in attesa per sempre.
+        store.fail_stale_pending(crate::util::now_ts() - 120);
         let chats = store.load_chats().unwrap_or_default();
         let contacts: HashMap<String, Contact> = store
             .load_contacts()
@@ -419,6 +422,56 @@ impl App {
             }
             self.store.set_contact_name(&twin, &name, rank).ok();
         }
+    }
+
+    /// Rilegge i nomi dall'archivio locale (nessuna rete): serve all'avvio e
+    /// quando il telefono chiede di riallineare la rubrica.
+    pub fn refresh_names(&mut self) -> usize {
+        let learned = match self.store.backfill_names(&self.aliases) {
+            Ok(count) => count,
+            Err(error) => {
+                log::debug!("nomi dall'archivio: {error}");
+                0
+            }
+        };
+        if let Ok(list) = self.store.load_contacts() {
+            for contact in list {
+                let known = self
+                    .contacts
+                    .get(&contact.jid)
+                    .map(|old| old.rank)
+                    .unwrap_or(0);
+                if contact.rank >= known || self.contacts.get(&contact.jid).is_none() {
+                    self.contacts.insert(contact.jid.clone(), contact);
+                }
+            }
+        }
+        // Le chat nate con il solo numero prendono il nome appena trovato.
+        let mut renamed = Vec::new();
+        for (position, chat) in self.chats.iter().enumerate() {
+            if crate::util::jid_is_group(&chat.id) {
+                continue;
+            }
+            if !util::looks_like_phone(&chat.name) && !chat.name.trim().is_empty() {
+                continue;
+            }
+            let found = self.contact_for(&chat.id).and_then(|contact| {
+                let name = contact.name.trim();
+                (!name.is_empty() && !util::looks_like_phone(name)).then(|| name.to_string())
+            });
+            if let Some(name) = found {
+                renamed.push((position, chat.id.clone(), name));
+            }
+        }
+        for (position, jid, name) in renamed {
+            if let Some(chat) = self.chats.get_mut(position) {
+                chat.name = name.clone();
+            }
+            self.store.set_chat_name(&jid, &name).ok();
+        }
+        self.sort_chats();
+        self.ctx.request_repaint();
+        learned
     }
 
     /// Unisce una chat nata con indirizzamento LID alla chat del numero.
@@ -825,6 +878,9 @@ impl App {
             Event::CallMissed { peer, video } => {
                 self.apply_missed_call(peer, video);
             }
+            Event::ContactSyncWanted => {
+                self.refresh_names();
+            }
             Event::Notice(text) => {
                 self.note(text);
             }
@@ -985,7 +1041,7 @@ impl App {
                 name,
                 is_group,
                 last_ts: message.ts,
-                preview: message.preview(),
+                preview: message.chat_preview(),
                 ..Default::default()
             };
             let _ = self.store.upsert_chat(&chat);
@@ -1029,7 +1085,7 @@ impl App {
             let chat = &mut self.chats[index];
             if message.ts >= chat.last_ts {
                 chat.last_ts = message.ts;
-                chat.preview = message.preview();
+                chat.preview = message.chat_preview();
             }
             if count > 0 {
                 chat.unread = chat.unread.saturating_add(1);

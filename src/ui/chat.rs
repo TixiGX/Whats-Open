@@ -340,6 +340,23 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(8, 5))
                         .show(ui, |ui| {
                             ui.set_max_width(max_width - 40.0);
+                            let who = if quote.sender.is_empty() {
+                                String::new()
+                            } else {
+                                self.name_of(&quote.sender)
+                            };
+                            if !who.is_empty() {
+                                ui.label(
+                                    RichText::new(who)
+                                        .size(10.5)
+                                        .strong()
+                                        .color(if bubble.own {
+                                            Color32::from_gray(60)
+                                        } else {
+                                            Palette::TEXT
+                                        }),
+                                );
+                            }
                             ui.label(
                                 RichText::new(util::truncate(&quote.text, 70))
                                     .size(11.0)
@@ -388,14 +405,39 @@ impl App {
                             .size(9.5)
                             .color(muted),
                     );
-                    if let Some(reaction) = bubble.reaction.as_ref() {
-                        if !reaction.is_empty() {
-                            ui.label(RichText::new(reaction).size(12.0));
-                        }
-                    }
                 });
             })
             .response;
+
+        // Reazione: pillola appesa al bordo del fumetto, fuori dal testo.
+        if let Some(reaction) = bubble.reaction.as_ref().filter(|text| !text.is_empty()) {
+            let galley = ui.painter().layout_no_wrap(
+                reaction.clone(),
+                egui::FontId::proportional(11.0),
+                Palette::TEXT,
+            );
+            let size = Vec2::new(galley.size().x + 14.0, galley.size().y + 5.0);
+            let left = if bubble.own {
+                response.rect.right() - size.x
+            } else {
+                response.rect.left()
+            };
+            let rect = egui::Rect::from_min_size(
+                egui::Pos2::new(left, response.rect.bottom() - 7.0),
+                size,
+            );
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::same(8), Palette::PANEL);
+            ui.painter().rect_stroke(
+                rect,
+                egui::CornerRadius::same(8),
+                egui::Stroke::new(1.0, Palette::BORDER),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter()
+                .galley(rect.min + Vec2::new(7.0, 2.5), galley, Palette::TEXT);
+            ui.add_space(7.0);
+        }
 
         if bubble.own && bubble.status == Status::Failed {
             let failed = ui
@@ -1157,7 +1199,7 @@ impl App {
 
     fn touch_chat(&mut self, message: &Message) {
         let chat_id = message.chat_id.clone();
-        let preview = message.preview();
+        let preview = message.chat_preview();
         if let Some(index) = self.index.get(&chat_id).copied() {
             self.chats[index].last_ts = message.ts;
             self.chats[index].preview = preview.clone();
