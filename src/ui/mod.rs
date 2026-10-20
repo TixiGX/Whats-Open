@@ -678,8 +678,9 @@ impl App {
         // Video in riproduzione.
         let mut video_frame: Option<(String, usize, usize)> = None;
         if let Some(video) = self.video.as_mut() {
+            // Le misure vanno lette prima: il fotogramma resta in prestito.
+            let (width, height) = (video.player.width as usize, video.player.height as usize);
             if let Some(frame) = video.player.poll_frame() {
-                let (width, height) = (video.player.width as usize, video.player.height as usize);
                 if width > 0 && height > 0 && frame.len() == width * height * 3 {
                     let mut rgba = Vec::with_capacity(width * height * 4);
                     for chunk in frame.chunks_exact(3) {
