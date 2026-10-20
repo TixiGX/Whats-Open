@@ -295,7 +295,26 @@ jobs:
           echo "-- log applicativo --" >> smoke.log
           tail -40 smoke/cache/whats-open/whats-open.log >> smoke.log 2>/dev/null
 
+          # Seconda istanza in modalità dimostrazione: serve a vedere la
+          # schermata delle chat senza un account vero.
+          mkdir -p smoke/dhome smoke/ddata smoke/dcache smoke/druntime
+          chmod 700 smoke/druntime
+          HOME="$PWD/smoke/dhome" XDG_RUNTIME_DIR="$PWD/smoke/druntime" \
+            XDG_DATA_HOME="$PWD/smoke/ddata" XDG_CACHE_HOME="$PWD/smoke/dcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 "$bin" > smoke/dout.log 2> smoke/derr.log &
+          demo=$!
+          sleep 10
+          if kill -0 "$demo" 2>/dev/null; then
+            echo "== demo: ancora viva dopo 10 s ==" >> smoke.log
+          else
+            echo "== demo: uscita da sola ==" >> smoke.log
+            tail -20 smoke/derr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/demo.png 2> smoke/demo.err
+          kill "$demo" 2>/dev/null
+
           shot=""
+          dshot=""
           if [ -s smoke/shot.png ]; then
             for width in 460 360 280 220; do
               convert smoke/shot.png -resize "${width}x" -quality 35 smoke/shot.jpg 2>/dev/null \
@@ -309,6 +328,20 @@ jobs:
           else
             echo "nessuno screenshot" >> smoke.log
             tail -3 smoke/shot.err >> smoke.log
+          fi
+          if [ -s smoke/demo.png ]; then
+            for width in 460 360 280 220; do
+              convert smoke/demo.png -resize "${width}x" -quality 35 smoke/demo.jpg 2>/dev/null \
+                || magick smoke/demo.png -resize "${width}x" -quality 35 smoke/demo.jpg 2>/dev/null
+              [ -s smoke/demo.jpg ] && [ "$(wc -c < smoke/demo.jpg)" -lt 42000 ] && break
+            done
+            if [ -s smoke/demo.jpg ]; then
+              echo "demo: $(wc -c < smoke/demo.jpg) byte ($width px)" >> smoke.log
+              dshot=$(base64 -w0 smoke/demo.jpg)
+            fi
+          else
+            echo "nessuno screenshot della demo" >> smoke.log
+            tail -3 smoke/demo.err >> smoke.log
           fi
           cat smoke.log
           grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
@@ -324,6 +357,13 @@ jobs:
               echo "SCREENSHOT_B64"
               echo '```'
               echo "$shot"
+              echo '```'
+            fi
+            if [ -n "$dshot" ]; then
+              echo
+              echo "DEMO_B64"
+              echo '```'
+              echo "$dshot"
               echo '```'
             fi
           } > comment.md

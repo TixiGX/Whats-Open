@@ -176,6 +176,7 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 | `WINIT_UNIX_BACKEND=x11` o `wayland` | forza il backend grafico |
 | `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
 | `RUST_LOG=debug` | log più verboso |
+| `WHATS_OPEN_DEMO=1` | apre l'interfaccia con conversazioni di prova, senza account e senza rete (l'invio è disattivato) |
 
 ## Se qualcosa non funziona
 

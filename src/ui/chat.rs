@@ -1059,6 +1059,10 @@ impl App {
 
 
     pub fn send_text(&mut self) {
+        if self.demo {
+            self.note("Modalità dimostrazione: invio disattivato");
+            return;
+        }
         let Some(chat) = self.selected.clone() else {
             return;
         };
@@ -1097,6 +1101,10 @@ impl App {
     }
 
     pub fn send_file(&mut self, path: PathBuf, voice: Option<(u32, Vec<u8>)>) {
+        if self.demo {
+            self.note("Modalità dimostrazione: invio disattivato");
+            return;
+        }
         let Some(chat) = self.selected.clone() else {
             self.note("Apri una chat prima di allegare un file");
             return;

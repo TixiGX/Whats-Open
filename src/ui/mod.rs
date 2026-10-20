@@ -164,6 +164,8 @@ pub struct App {
     /// Diventa vera quando una seconda istanza chiede di mostrare la finestra.
     pub focus_flag: Option<Arc<AtomicBool>>,
     pub toast: Option<Toast>,
+    /// `WHATS_OPEN_DEMO=1`: conversazioni finte, motore spento.
+    pub demo: bool,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
     pub started: Instant,
@@ -261,6 +263,7 @@ impl App {
             config,
             focus_flag: None,
             toast: None,
+            demo: false,
             last_expiry: Instant::now(),
             scroll_bottom: false,
             started: Instant::now(),
@@ -277,7 +280,11 @@ impl App {
             app.merge_alias(&lid, &pn);
         }
         app.sort_chats();
-        app.begin_engine(None);
+        if std::env::var_os("WHATS_OPEN_DEMO").is_some() {
+            app.load_demo();
+        } else {
+            app.begin_engine(None);
+        }
         Ok(app)
     }
 
@@ -472,6 +479,130 @@ impl App {
         self.sort_chats();
         self.ctx.request_repaint();
         learned
+    }
+
+    /// Conversazioni di prova, senza rete e senza toccare l'archivio: serve
+    /// solo a guardare l'interfaccia (`WHATS_OPEN_DEMO=1`).
+    pub fn load_demo(&mut self) {
+        use crate::model::Chat;
+        use crate::model::Message;
+
+        self.demo = true;
+        self.messages.clear();
+        self.conn = Conn::Connected;
+        self.status_text = "dimostrazione".to_string();
+        self.me_name = "Prova".to_string();
+        self.me_jid = "393000000000@s.whatsapp.net".to_string();
+
+        let now = crate::util::now_ts();
+        let anna = "393331112222@s.whatsapp.net".to_string();
+        let luca = "393401234567@s.whatsapp.net".to_string();
+        let group = "120363000000000001@g.us".to_string();
+
+        self.contacts.insert(
+            anna.clone(),
+            crate::model::Contact {
+                jid: anna.clone(),
+                name: "Anna Ferrari".to_string(),
+                rank: 3,
+                phone: "3331112222".to_string(),
+                avatar: None,
+            },
+        );
+        self.contacts.insert(
+            luca.clone(),
+            crate::model::Contact {
+                jid: luca.clone(),
+                name: "Luca".to_string(),
+                rank: 3,
+                phone: "3401234567".to_string(),
+                avatar: None,
+            },
+        );
+
+        let mut push = |id: &str,
+                         chat: &str,
+                         sender: &str,
+                         from_me: bool,
+                         ts: i64,
+                         kind: crate::model::Kind,
+                         text: &str,
+                         status: crate::model::Status,
+                         once: bool,
+                         duration: u32,
+                         quote: Option<(&str, &str)>| {
+            let mut message = Message {
+                id: id.to_string(),
+                chat_id: chat.to_string(),
+                sender: if from_me { String::new() } else { sender.to_string() },
+                sender_name: if from_me { String::new() } else { self.name_of(sender) },
+                from_me,
+                ts,
+                kind,
+                text: text.to_string(),
+                status,
+                view_once: once,
+                duration,
+                ..Default::default()
+            };
+            if let Some((sender, text)) = quote {
+                message.quote = Some(crate::model::Quote {
+                    id: String::new(),
+                    sender: sender.to_string(),
+                    text: text.to_string(),
+                });
+            }
+            if kind == crate::model::Kind::Document {
+                message.file_name = "contratto.pdf".to_string();
+                message.file_size = 48_211;
+            }
+            self.messages.push(message);
+        };
+
+        use crate::model::{Kind, Status};
+        push("m1", &anna, &anna, false, now - 3_600, Kind::Text, "Ciao! Come procede con il client?", Status::Read, false, 0, None);
+        push("m2", &anna, &anna, true, now - 3_540, Kind::Text, "Bene, niente WebView: protocol in Rust e interfaccia egui.", Status::Read, false, 0, None);
+        push("m3", &anna, &anna, false, now - 3_480, Kind::Image, "Guarda questa", Status::Read, true, 0, None);
+        push("m4", &anna, &anna, false, now - 3_420, Kind::Voice, "", Status::Read, false, 42, None);
+        push("m5", &anna, &anna, true, now - 3_360, Kind::Text, "Poi la ascolto con calma.", Status::Delivered, false, 0, Some((anna.as_str(), "Guarda questa")));
+        push("m6", &anna, &anna, false, now - 3_300, Kind::Voice, "", Status::Read, true, 12, None);
+        push("m7", &anna, &anna, false, now - 3_240, Kind::Sticker, "", Status::Read, false, 0, None);
+        push("m8", &anna, &anna, false, now - 3_180, Kind::Document, "", Status::Read, false, 0, None);
+
+        push("g1", &group, "393331112222@s.whatsapp.net", false, now - 900, Kind::Text, "Stasera si gioca?", Status::Read, false, 0, None);
+        push("g2", &group, &luca, false, now - 840, Kind::Gif, "GIF", Status::Read, false, 0, None);
+        push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua.", Status::Read, false, 0, None);
+
+        let mut chats = vec![
+            Chat {
+                id: anna.clone(),
+                name: "Anna Ferrari".to_string(),
+                last_ts: now - 3_180,
+                preview: "contratto.pdf".to_string(),
+                ..Default::default()
+            },
+            Chat {
+                id: group.clone(),
+                name: "Calcetto del giovedì".to_string(),
+                is_group: true,
+                last_ts: now - 780,
+                preview: "Tu: Io ci sono, porto l'acqua.".to_string(),
+                unread: 2,
+                ..Default::default()
+            },
+            Chat {
+                id: luca.clone(),
+                name: "Luca".to_string(),
+                last_ts: now - 7_200,
+                preview: "A domani".to_string(),
+                ..Default::default()
+            },
+        ];
+        chats.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
+        self.chats = chats;
+        self.selected = Some(anna);
+        self.sort_chats();
+        self.scroll_bottom = true;
     }
 
     /// Unisce una chat nata con indirizzamento LID alla chat del numero.
