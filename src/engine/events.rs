@@ -119,6 +119,15 @@ pub async fn handle(
             // nomi già archiviati, senza traffico di rete.
             emit(&sink, Event::ContactSyncWanted);
         }
+        WaEvent::SelfPushNameUpdated(_) => {
+            // Il nome del nostro account è arrivato dal server: la libreria
+            // annuncia "available" subito dopo, quindi torniamo offline.
+            let client = client.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let _ = client.presence().set_unavailable().await;
+            });
+        }
         WaEvent::PushNameUpdate(update) => {
             if !update.new_push_name.trim().is_empty() {
                 emit(

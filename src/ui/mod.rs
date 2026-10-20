@@ -738,11 +738,18 @@ impl App {
         }
         // Foto già scaricata in una sessione precedente: la texture va
         // ricreata al primo disegno, altrimenti dopo ogni avvio sparisce.
-        if let Some(bytes) = self
+        let stored = self
             .contacts
             .get(&jid)
             .and_then(|contact| contact.avatar.clone())
-        {
+            .or_else(|| {
+                // La foto può essere salvata sull'altro indirizzo dello stesso
+                // contatto (numero oppure LID).
+                self.twin_of(&jid)
+                    .and_then(|twin| self.contacts.get(&twin))
+                    .and_then(|contact| contact.avatar.clone())
+            });
+        if let Some(bytes) = stored {
             self.ensure_avatar_texture(&jid, &bytes);
             if !self.avatars.contains_key(&jid) {
                 // Bytes illeggibili: non riprovare a ogni fotogramma.

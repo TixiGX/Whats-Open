@@ -331,8 +331,9 @@ fn run(
                         }
                         client.set_force_active_delivery_receipts(true);
                         // Le prime tre volte coprono connessione, sync del nome
-                        // e storico; poi si riallinea ogni due minuti, perché
-                        // la presenza scade da sola.
+                        // e storico; poi si riallinea ogni mezzo minuto, perché
+                        // la libreria annuncia "available" da sola in vari
+                        // momenti e i contatti non devono vederci in linea.
                         let mut rounds = 0u32;
                         loop {
                             if let Err(err) = client.presence().set_unavailable().await {
@@ -342,7 +343,7 @@ fn run(
                             let wait = match rounds {
                                 1 => Duration::from_millis(1_200),
                                 2 => Duration::from_millis(4_000),
-                                _ => Duration::from_secs(120),
+                                _ => Duration::from_secs(30),
                             };
                             tokio::time::sleep(wait).await;
                         }
