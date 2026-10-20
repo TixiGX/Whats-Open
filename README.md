@@ -61,12 +61,35 @@ binario statico. Stessa procedura di installazione.
 ### Dal codice sorgente
 
 ```bash
+# dalla radice del repository, non dalla cartella packaging/
 cargo build --release
 sudo ./packaging/install.sh --prefix=/usr
 ```
 
+Lo script riconosce da solo se sta lavorando su un archivio già pronto
+(`bin/`, `share/`) o su un repository appena compilato (`target/release/`,
+`res/`, `dist/icons/`). In alternativa si può lanciare `cargo install --path .`
+per avere il binario in `~/.cargo/bin`.
+
 Su qualunque architettura (x86_64, aarch64, riscv64, …) basta una toolchain
 Rust: la compilazione avviene in locale con le librerie del sistema.
+
+#### Macchine con poca RAM
+
+Il profilo `release` è tarato per non superare 1–2 GB di RAM per processo:
+niente LTO e 16 unità di compilazione. Se il kernel uccide `rustc` (SIGKILL,
+spesso sul crate `waproto`), riduci l'ultimo fattore:
+
+```bash
+cargo build --release -j 2      # o -j 1: molta meno RAM, solo più lenta
+```
+
+Chi ha RAM da vendere può tornare al binario più compatto:
+
+```bash
+CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+  cargo build --release
+```
 
 ## Dipendenze
 
@@ -168,8 +191,14 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 7. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
    lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
    automaticamente come riserva.
-8. **Sessione danneggiata**: dalla schermata di errore usa **Cancella la
-   sessione**, oppure rimuovi `~/.local/share/whats-open/session.db`.
+8. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
+   uccide `rustc` per mancanza di RAM. Compila con `cargo build --release -j 2`
+   (o `-j 1`), chiudi le altre applicazioni oppure usa gli archivi precompilati.
+9. **`install.sh: comando non trovato`**: lo script va lanciato dalla radice del
+   repository (`./packaging/install.sh`) oppure dalla cartella dell'archivio
+   estratto (`./install.sh`), non da dentro `packaging/`.
+10. **Sessione danneggiata**: dalla schermata di errore usa **Cancella la
+    sessione**, oppure rimuovi `~/.local/share/whats-open/session.db`.
 
 ## Architettura
 

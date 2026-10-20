@@ -1,6 +1,9 @@
 #!/bin/sh
 # Installa Whats-Open su qualsiasi distribuzione Linux.
 #
+# Funziona sia dall'archivio già impacchettato sia dal repository appena
+# compilato con `cargo build --release`.
+#
 #   sudo ./install.sh                 # in /usr/local
 #   sudo ./install.sh --prefix=/usr   # pacchettizzato in /usr (distro)
 #   ./install.sh --user               # solo per l'utente corrente (~/.local)
@@ -30,7 +33,7 @@ for arg in "$@"; do
         --uninstall) MODE=uninstall ;;
         --no-deps)   CHECK_DEPS=0 ;;
         -h|--help)
-            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "Opzione sconosciuta: $arg" >&2
@@ -43,11 +46,9 @@ if [ "$USER_INSTALL" -eq 1 ]; then
 fi
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-BIN="$HERE/bin/$APP"
-DESKTOP="$HERE/share/applications/$APP.desktop"
-ICONS="$HERE/share/icons/hicolor"
 
 die() { echo "errore: $*" >&2; exit 1; }
+note() { echo "$*" >&2; }
 
 install_file() {
     src=$1; dst=$2; mode=$3
@@ -69,10 +70,52 @@ refresh_caches() {
     if [ -x "$(command -v update-desktop-database 2>/dev/null || true)" ]; then
         update-desktop-database -q "$base/share/applications" 2>/dev/null || true
     fi
-    if [ -x "$(command -v xdg-desktop-menu 2>/dev/null || true)" ]; then
-        : # la copia diretta basta, xdg-desktop-menu richiederebbe root
-    fi
 }
+
+# --------------------------------------------------------------------------
+# Da dove arrivano i file: archivio già pronto o repository compilato.
+# --------------------------------------------------------------------------
+
+# 1) archivio: ./bin/whats-open accanto a install.sh
+# 2) repository: packaging/install.sh con target/release/whats-open
+# 3) build ottimizzata con LTO accanto alla release (target/dist)
+LAYOUT=none
+if [ -f "$HERE/bin/$APP" ]; then
+    LAYOUT=packaged
+    ROOT=$HERE
+elif [ -f "$HERE/../target/release/$APP" ]; then
+    LAYOUT=source
+    ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+elif [ -f "$HERE/../target/dist/$APP" ]; then
+    LAYOUT=source-dist
+    ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+fi
+
+binary_path() {
+    case "$LAYOUT" in
+        packaged)    echo "$ROOT/bin/$APP" ;;
+        source)      echo "$ROOT/target/release/$APP" ;;
+        source-dist) echo "$ROOT/target/dist/$APP" ;;
+        *)           echo "" ;;
+    esac
+}
+
+desktop_path() {
+    case "$LAYOUT" in
+        packaged) echo "$ROOT/share/applications/$APP.desktop" ;;
+        *)        echo "$ROOT/res/$APP.desktop" ;;
+    esac
+}
+
+icon_path() {
+    size=$1
+    case "$LAYOUT" in
+        packaged) echo "$ROOT/share/icons/hicolor/${size}x${size}/apps/$APP.png" ;;
+        *)        echo "$ROOT/dist/icons/$APP-$size.png" ;;
+    esac
+}
+
+# --------------------------------------------------------------------------
 
 if [ "$MODE" = uninstall ]; then
     if [ "$DESTDIR" = "" ] && [ "$USER_INSTALL" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
@@ -89,7 +132,23 @@ if [ "$MODE" = uninstall ]; then
     exit 0
 fi
 
-[ -f "$BIN" ] || die "binario non trovato: $BIN"
+if [ "$LAYOUT" = none ]; then
+    echo "errore: binario non trovato." >&2
+    echo "" >&2
+    echo "  Se hai scaricato l'archivio, lancia ./install.sh dalla cartella" >&2
+    echo "  dove si trovano bin/, share/ e questo script." >&2
+    echo "" >&2
+    echo "  Se stai compilando dal repository, esegui prima:" >&2
+    echo "      cargo build --release" >&2
+    echo "  e poi, dalla radice del repository:" >&2
+    echo "      sudo ./packaging/install.sh --prefix=/usr" >&2
+    echo "" >&2
+    echo "  Cercato in: $HERE/bin/$APP e $HERE/../target/release/$APP" >&2
+    exit 1
+fi
+
+BIN=$(binary_path)
+DESKTOP=$(desktop_path)
 
 if [ "$DESTDIR" = "" ] && [ "$USER_INSTALL" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
     die "l'installazione in $PREFIX richiede root; usa --user per ~/.local"
@@ -105,9 +164,6 @@ if [ "$CHECK_DEPS" -eq 1 ] && [ "$DESTDIR" = "" ]; then
     done
     if [ -n "$missing" ]; then
         echo "attenzione: librerie non trovate:$missing"
-        case "$(uname -s)" in
-            Linux) ;;
-        esac
         if command -v apt-get >/dev/null 2>&1; then
             echo "  Debian/Ubuntu:  sudo apt install libasound2 libx11-6 libgl1"
         elif command -v dnf >/dev/null 2>&1; then
@@ -126,6 +182,7 @@ if [ "$CHECK_DEPS" -eq 1 ] && [ "$DESTDIR" = "" ]; then
 fi
 
 install_file "$BIN" "$DESTDIR$PREFIX/bin/$APP" 755
+
 if [ -f "$DESKTOP" ]; then
     # La voce di menu punta al percorso reale: funziona anche installando in
     # un prefisso che non è nel PATH (es. /opt/whats-open).
@@ -133,15 +190,19 @@ if [ -f "$DESKTOP" ]; then
     sed "s|^Exec=$APP|Exec=$PREFIX/bin/$APP|" "$DESKTOP" > "$menu"
     install_file "$menu" "$DESTDIR$PREFIX/share/applications/$APP.desktop" 644
     rm -f "$menu"
+else
+    note "nota: $APP.desktop non trovato, salto la voce di menu"
 fi
-if [ -d "$ICONS" ]; then
-    for size in 16 24 32 48 64 128 256 512; do
-        icon="$ICONS/${size}x${size}/apps/$APP.png"
-        [ -f "$icon" ] || continue
-        install_file "$icon" \
-            "$DESTDIR$PREFIX/share/icons/hicolor/${size}x${size}/apps/$APP.png" 644
-    done
-fi
+
+icons=0
+for size in 16 24 32 48 64 128 256 512; do
+    icon=$(icon_path "$size")
+    [ -f "$icon" ] || continue
+    install_file "$icon" \
+        "$DESTDIR$PREFIX/share/icons/hicolor/${size}x${size}/apps/$APP.png" 644
+    icons=$((icons + 1))
+done
+[ "$icons" -gt 0 ] || note "nota: nessuna icona trovata, il desktop userà quella generica"
 
 refresh_caches "$DESTDIR$PREFIX"
 

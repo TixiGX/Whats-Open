@@ -55,8 +55,14 @@ whatsapp-rust = { version = "=0.7.0", default-features = false, features = [
     "tokio-native",
 ] }
 
+# Profilo pensato per compilare anche su portatili con 4-8 GB di RAM:
+# niente LTO e più unità di compilazione. Con `lto = "thin"` e
+# `codegen-units = 1` il crate `waproto` (protobuf generato, ~7 MB di
+# sorgente) arriva a chiedere diversi GB e su molte macchine il kernel lo
+# uccide con SIGKILL. Il binario cresce di qualche MB, ma la compilazione
+# riesce ovunque.
 [profile.release]
 opt-level = 3
-lto = "thin"
-codegen-units = 1
+codegen-units = 16
+lto = false
 strip = true
