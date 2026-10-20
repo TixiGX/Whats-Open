@@ -538,7 +538,7 @@ impl App {
         let peer = if peer.is_empty() {
             previous.map(|call| call.peer.clone()).unwrap_or_default()
         } else {
-            peer
+            self.canonical(&peer)
         };
         let muted = previous.map(|call| call.muted).unwrap_or(false);
         let since = match (previous, phase) {
@@ -683,13 +683,21 @@ impl App {
                 }
             }
             Event::History { chats, messages, done } => {
-                for chat in chats {
+                for mut chat in chats {
+                    chat.id = self.canonical(&chat.id);
                     if !self.index.contains_key(&chat.id) {
                         let _ = self.store.upsert_chat(&chat);
                         self.chats.push(chat);
                     }
                 }
                 self.sort_chats();
+                let messages: Vec<Message> = messages
+                    .into_iter()
+                    .map(|mut message| {
+                        message.chat_id = self.canonical(&message.chat_id);
+                        message
+                    })
+                    .collect();
                 self.store.insert_messages(&messages).ok();
                 if let Some(selected) = self.selected.clone() {
                     self.messages = self.store.load_messages(&selected, 300).unwrap_or_default();
@@ -699,6 +707,7 @@ impl App {
                 }
             }
             Event::ChatName { chat, name } => {
+                let chat = self.canonical(&chat);
                 if let Some(index) = self.index.get(&chat).copied() {
                     self.chats[index].name = name.clone();
                     self.store.set_chat_name(&chat, &name).ok();
@@ -708,6 +717,7 @@ impl App {
                 }
             }
             Event::Status { chat, ids, status } => {
+                let chat = self.canonical(&chat);
                 for message in self.messages.iter_mut() {
                     if message.chat_id == chat && ids.iter().any(|id| id == &message.id) {
                         if status > message.status {
@@ -720,6 +730,7 @@ impl App {
                 }
             }
             Event::Typing { chat, typing } => {
+                let chat = self.canonical(&chat);
                 if let Some(index) = self.index.get(&chat).copied() {
                     self.chats[index].typing = typing;
                 }
@@ -735,6 +746,7 @@ impl App {
                 online,
                 last_seen,
             } => {
+                let chat = self.canonical(&chat);
                 if let Some(index) = self.index.get(&chat).copied() {
                     self.chats[index].online = online;
                     if last_seen.is_some() {
