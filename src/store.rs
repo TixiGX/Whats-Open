@@ -371,6 +371,16 @@ impl Store {
         Ok(inserted)
     }
 
+    /// Riapre un invio fallito: lo stato può tornare a `pending` solo da qui.
+    pub fn retry_message(&self, chat_id: &str, message_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET status = 'pending'
+              WHERE chat_id = ?1 AND id = ?2 AND status = 'failed'",
+            params![chat_id, message_id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_status(&self, chat_id: &str, message_id: &str, status: Status) -> Result<()> {
         // Mai tornare indietro nello stato (sent -> delivered -> read).
         self.conn.execute(

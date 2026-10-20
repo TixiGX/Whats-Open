@@ -384,6 +384,26 @@ impl App {
             })
             .response;
 
+        if bubble.own && bubble.status == Status::Failed {
+            let failed = ui
+                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("non inviato · riprova")
+                                .size(10.0)
+                                .color(Palette::DANGER),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Tocca per riprovare l'invio")
+                    .clicked()
+                })
+                .inner;
+            if failed {
+                self.actions.push(Action::Retry(index));
+            }
+        }
+
         response.context_menu(|ui| {
             if ui.button("Rispondi").clicked() {
                 self.actions.push(Action::Reply(index));

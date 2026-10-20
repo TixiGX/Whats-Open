@@ -59,6 +59,8 @@ pub enum Action {
     Revoke(usize),
     /// Svela un contenuto "una volta sola" (testo o vocale).
     RevealOnce(usize),
+    /// Riprova l'invio di un messaggio fallito.
+    Retry(usize),
     Seleziona(String),
 }
 
@@ -304,9 +306,24 @@ impl App {
     }
 
     pub fn contact_for(&self, jid: &str) -> Option<&Contact> {
-        self.contacts
-            .get(jid)
-            .or_else(|| self.contacts.get(&self.canonical(jid)))
+        let canonical = self.canonical(jid);
+        if let Some(contact) = self.contacts.get(jid).or_else(|| self.contacts.get(&canonical)) {
+            return Some(contact);
+        }
+        // Lo stesso contatto vive su due indirizzi (numero e LID): se il nome
+        // è noto solo sull'altro, vale comunque.
+        let twin = self.twin_of(&canonical)?;
+        self.contacts.get(&twin)
+    }
+
+    /// L'altro indirizzo dello stesso contatto: `@lid` ↔ numero.
+    fn twin_of(&self, jid: &str) -> Option<String> {
+        if let Some(pn) = self.aliases.get(jid) {
+            return Some(pn.clone());
+        }
+        self.aliases
+            .iter()
+            .find_map(|(lid, pn)| (pn == jid).then(|| lid.clone()))
     }
 
     /// Nome da mostrare in lista e in intestazione.
@@ -367,11 +384,13 @@ impl App {
                 .find_map(|(lid, pn)| (pn == &jid).then(|| lid.clone()))
         };
         if let Some(twin) = twin {
-            if let Some(entry) = self.contacts.get_mut(&twin) {
-                if rank >= entry.rank {
-                    entry.name = name.clone();
-                    entry.rank = rank;
-                }
+            let entry = self
+                .contacts
+                .entry(twin.clone())
+                .or_insert_with(|| Contact::empty(&twin));
+            if rank >= entry.rank {
+                entry.name = name.clone();
+                entry.rank = rank;
             }
             self.store.set_contact_name(&twin, &name, rank).ok();
         }
@@ -1250,6 +1269,27 @@ impl App {
                                 emoji: String::new(),
                             });
                         }
+                    }
+                }
+                Action::Retry(index) => {
+                    let Some(message) = self.messages.get(index).cloned() else {
+                        continue;
+                    };
+                    if message.kind != Kind::Text || message.text.is_empty() {
+                        self.note("Questo tipo di messaggio va re-inviato a mano");
+                        continue;
+                    }
+                    self.store.retry_message(&message.chat_id, &message.id).ok();
+                    if let Some(entry) = self.messages.get_mut(index) {
+                        entry.status = Status::Pending;
+                    }
+                    if let Some(engine) = self.engine.as_ref() {
+                        engine.send(Cmd::SendText {
+                            chat: message.chat_id.clone(),
+                            text: message.text.clone(),
+                            local_id: message.id.clone(),
+                            reply: None,
+                        });
                     }
                 }
                 Action::CopyText(index) => {
