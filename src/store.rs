@@ -506,12 +506,15 @@ mod tests {
         store
             .apply_edit("d@s.whatsapp.net", "e1", "nuovo", 8)
             .unwrap();
-        store.apply_revoke("d@s.whatsapp.net", "e1").unwrap();
+        let edited = store.load_messages("d@s.whatsapp.net", 10).unwrap();
+        assert_eq!(edited[0].text, "nuovo");
+        assert!(edited[0].edited);
+        assert!(!edited[0].deleted);
 
-        let loaded = store.load_messages("d@s.whatsapp.net", 10).unwrap();
-        assert_eq!(loaded[0].text, "nuovo");
-        assert!(loaded[0].edited);
-        assert!(loaded[0].deleted);
+        store.apply_revoke("d@s.whatsapp.net", "e1").unwrap();
+        let revoked = store.load_messages("d@s.whatsapp.net", 10).unwrap();
+        assert!(revoked[0].deleted);
+        assert_eq!(revoked[0].body(), "Questo messaggio è stato eliminato");
     }
 
     #[test]
