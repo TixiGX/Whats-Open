@@ -33,7 +33,7 @@ for arg in "$@"; do
         --uninstall) MODE=uninstall ;;
         --no-deps)   CHECK_DEPS=0 ;;
         -h|--help)
-            sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "Opzione sconosciuta: $arg" >&2
