@@ -32,6 +32,10 @@ copia di WhatsApp Web.
 
 ## Installazione
 
+Ogni release pubblica due archivi già pronti (`whats-open-linux-x86_64-musl` e
+`whats-open-linux-x86_64-glibc`); chi preferisce compilare può farlo con
+`cargo build --release`.
+
 ### Binario statico (qualsiasi distribuzione)
 
 L'archivio `whats-open-linux-x86_64-musl.tar.gz` contiene un binario
