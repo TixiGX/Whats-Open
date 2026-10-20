@@ -155,7 +155,7 @@ fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
         .spawn(move || {
             let mut down = Down::new(rate);
             let mut out: Vec<i16> = Vec::with_capacity(2048);
-            let mut push = move |mono: &[f32]| {
+            let push = move |mono: &[f32]| {
                 out.clear();
                 for &sample in mono {
                     down.push(sample, &mut out);
@@ -284,6 +284,7 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
     let (tx, rx) = bounded::<Vec<i16>>(64);
 
     let stream_queue = queue.clone();
+    let alive = tx.clone();
     std::thread::Builder::new()
         .name("whats-open-speaker".into())
         .spawn(move || {
@@ -335,7 +336,7 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
                 log::warn!("avvio casse: {err}");
                 return;
             }
-            while !tx.is_closed() {
+            while !alive.is_closed() {
                 std::thread::park_timeout(Duration::from_millis(200));
             }
             drop(stream);
