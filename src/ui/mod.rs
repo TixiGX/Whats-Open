@@ -462,10 +462,15 @@ impl App {
                 .or_insert_with(|| Contact::empty(&jid));
             entry.avatar = bytes.clone();
         }
-        self.avatar_asked.remove(&jid);
         match bytes.as_ref() {
-            Some(bytes) => self.ensure_avatar_texture(&jid, bytes),
+            Some(bytes) => {
+                // Una foto nuova sostituisce quella vecchia.
+                self.avatars.remove(&jid);
+                self.ensure_avatar_texture(&jid, bytes);
+            }
             None => {
+                // Nessuna foto: non richiederla più per questa sessione.
+                self.avatar_asked.insert(jid.clone());
                 self.avatars.remove(&jid);
             }
         }

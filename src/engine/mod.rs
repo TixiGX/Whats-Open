@@ -673,17 +673,29 @@ async fn command_loop(
 /// dal CDN. Le foto profilo non sono cifrate, quindi basta una GET.
 pub(crate) async fn fetch_avatar(client: &Arc<Client>, jid: &str) -> Option<Vec<u8>> {
     let jid: Jid = jid.parse().ok()?;
-    let picture = client
-        .contacts()
-        .get_profile_picture(&jid, true)
-        .await
-        .ok()
-        .flatten()?;
-    if picture.url.is_empty() {
-        return None;
-    }
+    // Le foto dei gruppi passano da un IQ diverso da quelle dei contatti.
+    let url = if matches!(jid.server, whatsapp_rust::Server::Group) {
+        let mut pictures = client
+            .groups()
+            .get_profile_pictures(
+                vec![jid.clone()],
+                whatsapp_rust::features::PictureType::Preview,
+            )
+            .await
+            .ok()?;
+        pictures.pop().and_then(|picture| picture.url)?
+    } else {
+        client
+            .contacts()
+            .get_profile_picture(&jid, true)
+            .await
+            .ok()
+            .flatten()
+            .map(|picture| picture.url)
+            .filter(|url| !url.is_empty())?
+    };
     let http = UreqHttpClient::new();
-    let mut request = HttpRequest::get(picture.url);
+    let mut request = HttpRequest::get(url);
     request
         .headers
         .insert("User-Agent".to_string(), "WhatsApp/2.26.0".to_string());
