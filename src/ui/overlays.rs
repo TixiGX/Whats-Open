@@ -112,7 +112,14 @@ impl App {
                     return;
                 }
                 Err(error) => {
-                    self.note(error);
+                    // Succede senza ffmpeg o con un codec che non sappiamo
+                    // decodificare: meglio aprire il file col player del desktop.
+                    self.note(format!("{error} — apro con il player di sistema"));
+                    self.play_externally(&path);
+                    if message.view_once {
+                        self.mark_played(&message.id, true);
+                    }
+                    return;
                 }
             }
         }
