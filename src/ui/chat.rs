@@ -1036,10 +1036,6 @@ fn fit_size(size: Vec2, max_width: f32, max_height: f32) -> Vec2 {
     Vec2::new(size.x * scale, size.y * scale)
 }
 
-pub fn cached_path(app: &App, chat: &str, id: &str, ext: &str) -> PathBuf {
-    app.paths.cached_media(chat, id, ext)
-}
-
 fn day_label(ts: i64) -> String {
     let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0) else {
         return String::new();

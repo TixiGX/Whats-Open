@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::Sample as _;
 
 const QUEUE_CAP: usize = 96_000; // campioni interleaved (~1 s stereo a 48 kHz)
 
