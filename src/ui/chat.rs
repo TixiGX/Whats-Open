@@ -275,22 +275,26 @@ impl App {
     }
 
     fn bubble_frame(&mut self, ui: &mut egui::Ui, index: usize, bubble: &Bubble, max_width: f32) {
-        let fill = if bubble.own {
+        // Gli sticker non stanno in una bolla: si vedono come su WhatsApp.
+        let bare = bubble.kind == Kind::Sticker && !bubble.view_once;
+        let fill = if bare {
+            Color32::TRANSPARENT
+        } else if bubble.own {
             Palette::OWN_BUBBLE
         } else {
             Palette::IN_BUBBLE
         };
-        let text_color = if bubble.own {
+        let text_color = if bubble.own && !bare {
             Palette::OWN_TEXT
         } else {
             Palette::IN_TEXT
         };
-        let muted = if bubble.own {
+        let muted = if bubble.own && !bare {
             Color32::from_gray(120)
         } else {
             Palette::MUTED
         };
-        let faint = if bubble.own {
+        let faint = if bubble.own && !bare {
             Color32::from_gray(180)
         } else {
             Color32::from_gray(110)
@@ -298,8 +302,11 @@ impl App {
 
         let response = egui::Frame::new()
             .fill(fill)
-            .corner_radius(egui::CornerRadius::same(12))
-            .inner_margin(egui::Margin::symmetric(10, 7))
+            .corner_radius(egui::CornerRadius::same(if bare { 0 } else { 12 }))
+            .inner_margin(egui::Margin::symmetric(
+                if bare { 0 } else { 10 },
+                if bare { 2 } else { 7 },
+            ))
             .show(ui, |ui| {
                 ui.set_max_width(max_width);
 
