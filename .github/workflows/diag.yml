@@ -42,12 +42,13 @@ jobs:
 
       - name: Verifica
         run: |
-          { echo "=== libasound statica"; ls -l /usr/local/lib/libasound*
-            echo "=== stub in /usr/lib"; ls /usr/lib/*.a 2>&1
-            echo "=== pkg-config"; pkg-config --cflags --libs --static alsa 2>&1
-            echo "=== prova di link"; printf '%s\n' \
-              '#include <alsa/asoundlib.h>' \
+          { echo "PC: $(pkg-config --libs --static alsa 2>&1)"
+            printf '%s\n' '#include <alsa/asoundlib.h>' \
               'int main(void) { snd_config_update(); return snd_config_top(0); }' > /tmp/t.c
-            cc -static -o /tmp/t /tmp/t.c $(pkg-config --cflags --libs --static alsa) 2>&1 \
-              && file /tmp/t
+            if cc -static -o /tmp/t /tmp/t.c $(pkg-config --cflags --libs --static alsa) 2> /tmp/link.log; then
+              echo "LINK OK: $(file -b /tmp/t)"
+            else
+              echo "LINK KO: $(tail -3 /tmp/link.log | tr '\n' ' ')"
+            fi
+            echo "STUB: $(ls /usr/lib/libpthread.a /usr/lib/libm.a /usr/lib/librt.a 2>&1 | tr '\n' ' ')"
           } 2>&1 | sed 's/^/::error::diag /'
