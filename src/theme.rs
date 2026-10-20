@@ -49,8 +49,18 @@ pub fn install_system_fonts(ctx: &egui::Context) {
     ctx.set_fonts(definitions);
 }
 
-pub fn apply(ctx: &egui::Context) {
-    install_system_fonts(ctx);
+/// Sostituisce i font senza toccare il resto del tema.
+pub fn set_system_fonts(ctx: &egui::Context, enabled: bool) {
+    if enabled {
+        install_system_fonts(ctx);
+    } else {
+        // Torna ai soli font incorporati nel binario.
+        ctx.set_fonts(egui::FontDefinitions::default());
+    }
+}
+
+pub fn apply(ctx: &egui::Context, system_fonts: bool) {
+    set_system_fonts(ctx, system_fonts);
 
     let mut style = (*ctx.global_style()).clone();
 

@@ -127,7 +127,12 @@ fi
 
 install_file "$BIN" "$DESTDIR$PREFIX/bin/$APP" 755
 if [ -f "$DESKTOP" ]; then
-    install_file "$DESKTOP" "$DESTDIR$PREFIX/share/applications/$APP.desktop" 644
+    # La voce di menu punta al percorso reale: funziona anche installando in
+    # un prefisso che non è nel PATH (es. /opt/whats-open).
+    menu=$(mktemp 2>/dev/null || echo "/tmp/$APP.desktop.$$")
+    sed "s|^Exec=$APP|Exec=$PREFIX/bin/$APP|" "$DESKTOP" > "$menu"
+    install_file "$menu" "$DESTDIR$PREFIX/share/applications/$APP.desktop" 644
+    rm -f "$menu"
 fi
 if [ -d "$ICONS" ]; then
     for size in 16 24 32 48 64 128 256 512; do

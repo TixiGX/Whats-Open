@@ -4,7 +4,3 @@
 *.db-wal
 *.db-shm
 .DS_Store
-
-# artefatti grafici generati (sorgente: dist/icon-gen.py, res/ contiene le icone)
-/dist/whats-open.png
-/dist/icons/

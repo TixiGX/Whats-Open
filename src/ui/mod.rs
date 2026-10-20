@@ -150,8 +150,8 @@ impl App {
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, paths: Paths) -> anyhow::Result<Self> {
-        crate::theme::apply(&cc.egui_ctx);
-        let paths_for_config = paths.data.clone();
+        let config = Config::load(&paths.data);
+        crate::theme::apply(&cc.egui_ctx, config.system_fonts);
         let store = Store::open(&paths.db)?;
         let chats = store.load_chats().unwrap_or_default();
 
@@ -203,7 +203,7 @@ impl App {
             rec_start: Instant::now(),
             rec_path: PathBuf::new(),
             attach_rx: None,
-            config: Config::load(&paths_for_config),
+            config,
             focus_flag: None,
             toast: None,
             last_expiry: Instant::now(),

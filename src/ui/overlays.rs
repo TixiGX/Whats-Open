@@ -739,6 +739,23 @@ impl App {
                         self.config.save(&self.paths.data);
                     }
 
+                    ui.add_space(4.0);
+                    let mut system_fonts = self.config.system_fonts;
+                    if ui
+                        .checkbox(
+                            &mut system_fonts,
+                            RichText::new("Font di sistema come riserva (emoji, arabo, CJK)")
+                                .size(12.0)
+                                .color(Palette::TEXT),
+                        )
+                        .on_hover_text("Riavvia il caricamento dei font dai percorsi di sistema")
+                        .changed()
+                    {
+                        self.config.system_fonts = system_fonts;
+                        self.config.save(&self.paths.data);
+                        crate::theme::set_system_fonts(&self.ctx, system_fonts);
+                    }
+
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         if ui

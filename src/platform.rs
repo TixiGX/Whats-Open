@@ -129,13 +129,17 @@ pub fn report(paths: &crate::util::Paths) -> String {
         glibc_version().unwrap_or_else(|| "musl/statico".to_string())
     ));
 
+    let has_ffmpeg = command_exists("ffmpeg");
+    let has_xdg_open = command_exists("xdg-open");
+    let has_notify = command_exists("notify-send");
+    let has_portal = portal_present();
     for (label, found) in [
-        ("ffmpeg", command_exists("ffmpeg")),
+        ("ffmpeg", has_ffmpeg),
         ("ffprobe", command_exists("ffprobe")),
-        ("xdg-open", command_exists("xdg-open")),
+        ("xdg-open", has_xdg_open),
         ("ffplay", command_exists("ffplay")),
-        ("notify-send", command_exists("notify-send")),
-        ("portale", portal_present()),
+        ("notify-send", has_notify),
+        ("portale", has_portal),
     ] {
         out.push_str(&format!("{:<14}: {}\n", label, if found { "sì" } else { "no" }));
     }
@@ -155,6 +159,69 @@ pub fn report(paths: &crate::util::Paths) -> String {
             folders_list(&fonts)
         }
     ));
+
+    let mut advice: Vec<String> = Vec::new();
+    if !has_ffmpeg {
+        advice.push(format!(
+            "ffmpeg — decodifica di audio e video: {}",
+            install_hint("ffmpeg", "ffmpeg", "ffmpeg", "ffmpeg", "ffmpeg")
+        ));
+    }
+    if !has_xdg_open {
+        advice.push(format!(
+            "xdg-utils — apertura dei documenti: {}",
+            install_hint(
+                "xdg-utils",
+                "xdg-utils",
+                "xdg-utils",
+                "xdg-utils",
+                "xdg-utils"
+            )
+        ));
+    }
+    if !has_notify {
+        advice.push(format!(
+            "notify-send — avvisi di sistema: {}",
+            install_hint(
+                "libnotify-bin",
+                "libnotify",
+                "libnotify",
+                "libnotify-tools",
+                "libnotify"
+            )
+        ));
+    }
+    if !has_portal {
+        advice.push(format!(
+            "xdg-desktop-portal — finestra \"allega file\": {}",
+            install_hint(
+                "xdg-desktop-portal zenity",
+                "xdg-desktop-portal zenity",
+                "xdg-desktop-portal zenity",
+                "xdg-desktop-portal zenity",
+                "xdg-desktop-portal zenity"
+            )
+        ));
+    }
+    if fonts.is_empty() {
+        advice.push(format!(
+            "font Noto — emoji e scritture non latine: {}",
+            install_hint(
+                "fonts-noto-core fonts-noto-color-emoji",
+                "google-noto-sans-fonts google-noto-color-emoji-fonts",
+                "noto-fonts noto-fonts-emoji",
+                "noto-sans-fonts noto-coloremoji-fonts",
+                "font-noto font-noto-emoji"
+            )
+        ));
+    }
+    advice.retain(|line| !line.ends_with(": "));
+    if !advice.is_empty() {
+        out.push_str("\nper completare l'installazione:\n");
+        for line in advice {
+            out.push_str(&format!("  - {line}\n"));
+        }
+    }
 
     out.push_str(&format!("dati          : {}\n", paths.data.display()));
     out.push_str(&format!("cache         : {}\n", paths.cache.display()));
@@ -412,4 +479,46 @@ pub fn single_instance(paths: &crate::util::Paths) -> Result<InstanceLock, Strin
         });
 
     Ok(InstanceLock { path, focus })
+}
+
+/// Famiglia di distribuzione, per suggerire il comando giusto.
+fn distro_family() -> &'static str {
+    let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let field = |key: &str| -> String {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key))
+            .map(|value| value.trim_matches('"').to_lowercase())
+            .unwrap_or_default()
+    };
+    let all = format!("{} {}", field("ID="), field("ID_LIKE="));
+    if all.contains("debian") || all.contains("ubuntu") || all.contains("mint") {
+        "debian"
+    } else if all.contains("fedora")
+        || all.contains("rhel")
+        || all.contains("centos")
+        || all.contains("rocky")
+        || all.contains("alma")
+    {
+        "fedora"
+    } else if all.contains("arch") || all.contains("manjaro") {
+        "arch"
+    } else if all.contains("suse") {
+        "suse"
+    } else if all.contains("alpine") {
+        "alpine"
+    } else {
+        "altro"
+    }
+}
+
+/// Comando di installazione adatto alla distribuzione in uso.
+fn install_hint(deb: &str, rpm: &str, pac: &str, zyp: &str, apk: &str) -> String {
+    match distro_family() {
+        "debian" => format!("sudo apt install {deb}"),
+        "fedora" => format!("sudo dnf install {rpm}"),
+        "arch" => format!("sudo pacman -S {pac}"),
+        "suse" => format!("sudo zypper install {zyp}"),
+        "alpine" => format!("sudo apk add {apk}"),
+        _ => String::new(),
+    }
 }

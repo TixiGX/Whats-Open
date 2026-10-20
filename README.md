@@ -24,7 +24,8 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - Spunte di invio/consegna/lettura, ricevute di ascolto per i vocali
 - Storico iniziale importato dal telefono
 - File trascinati nella finestra, selettore di sistema o percorso a mano
-- Istanza singola, log su file, diagnostica integrata
+- Istanza singola: la seconda copia riporta davanti la finestra già aperta
+- Log su file (con rotazione) e diagnostica integrata
 
 Non ci sono chiamate, storie o canali: l'obiettivo è un client leggero, non una
 copia di WhatsApp Web.
@@ -140,7 +141,7 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 
 | Variabile | Effetto |
 |---|---|
-| `WHATS_OPEN_NO_SYSTEM_FONTS=1` | usa solo i font incorporati |
+| `WHATS_OPEN_NO_SYSTEM_FONTS=1` | usa solo i font incorporati (equivale a togliere la spunta nelle impostazioni) |
 | `WINIT_UNIX_BACKEND=x11` o `wayland` | forza il backend grafico |
 | `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
 | `RUST_LOG=debug` | log più verboso |
