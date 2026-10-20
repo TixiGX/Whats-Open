@@ -259,34 +259,75 @@ jobs:
           set +e
           sudo apt-get update > /dev/null 2>&1
           sudo apt-get install -y --no-install-recommends \
-            xvfb xauth libgl1-mesa-dri libegl1 libglx-mesa0 libxkbcommon-x11-0 \
-            libasound2 fontconfig fonts-dejavu-core > apt.log 2>&1
+            xvfb xauth imagemagick libgl1-mesa-dri libegl1 libglx-mesa0 \
+            libxkbcommon-x11-0 libasound2 fontconfig fonts-dejavu-core \
+            > apt.log 2>&1
           bin="pkg/whats-open-0.1.0-linux-x86_64-glibc/bin/whats-open"
+          mkdir -p smoke/home smoke/data smoke/cache smoke/runtime
+          chmod 700 smoke/runtime
           {
             echo "== --version =="
             "$bin" --version
             echo "== --help =="
             "$bin" --help | head -20
             echo "== --doctor =="
-            XDG_DATA_HOME="$PWD/smoke/data" XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
-            echo "== avvio grafico (Xvfb) =="
-            mkdir -p smoke/home smoke/data smoke/cache smoke/runtime
-            chmod 700 smoke/runtime
-            HOME="$PWD/smoke/home" XDG_RUNTIME_DIR="$PWD/smoke/runtime" \
-              XDG_DATA_HOME="$PWD/smoke/data" XDG_CACHE_HOME="$PWD/smoke/cache" \
-              timeout 25 xvfb-run -a -s "-screen 0 1280x800x24" "$bin" \
-              > smoke/out.log 2> smoke/err.log
-            status=$?
-            echo "uscita: $status (124 = ancora viva dopo 25 s, va bene)"
-            echo "-- stdout --"; tail -25 smoke/out.log
-            echo "-- stderr --"; tail -25 smoke/err.log
-            echo "-- log applicativo --"
-            tail -40 smoke/cache/whats-open/whats-open.log 2>/dev/null
+            HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
           } > smoke.log 2>&1
+
+          Xvfb :99 -screen 0 1280x800x24 > xvfb.log 2>&1 &
+          sleep 2
+          HOME="$PWD/smoke/home" XDG_RUNTIME_DIR="$PWD/smoke/runtime" \
+            XDG_DATA_HOME="$PWD/smoke/data" XDG_CACHE_HOME="$PWD/smoke/cache" \
+            DISPLAY=:99 "$bin" > smoke/out.log 2> smoke/err.log &
+          app=$!
+          sleep 18
+          if kill -0 "$app" 2>/dev/null; then
+            echo "== l'app è ancora viva dopo 18 s ==" >> smoke.log
+          else
+            echo "== l'app è uscita da sola ==" >> smoke.log
+          fi
+          import -display :99 -window root smoke/shot.png 2> smoke/shot.err
+          kill "$app" 2>/dev/null
+          sleep 1
+          echo "-- stdout --" >> smoke.log; tail -20 smoke/out.log >> smoke.log
+          echo "-- stderr --" >> smoke.log; tail -20 smoke/err.log >> smoke.log
+          echo "-- log applicativo --" >> smoke.log
+          tail -40 smoke/cache/whats-open/whats-open.log >> smoke.log 2>/dev/null
+
+          shot=""
+          if [ -s smoke/shot.png ]; then
+            for width in 460 360 280 220; do
+              convert smoke/shot.png -resize "${width}x" -quality 35 smoke/shot.jpg 2>/dev/null \
+                || magick smoke/shot.png -resize "${width}x" -quality 35 smoke/shot.jpg 2>/dev/null
+              [ -s smoke/shot.jpg ] && [ "$(wc -c < smoke/shot.jpg)" -lt 42000 ] && break
+            done
+            if [ -s smoke/shot.jpg ]; then
+              echo "screenshot: $(wc -c < smoke/shot.jpg) byte ($width px)" >> smoke.log
+              shot=$(base64 -w0 smoke/shot.jpg)
+            fi
+          else
+            echo "nessuno screenshot" >> smoke.log
+            tail -3 smoke/shot.err >> smoke.log
+          fi
           cat smoke.log
           grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
-          if grep -qi "panicked" smoke.log; then echo "::error::panic all'avvio"; fi
-          jq -Rs '{body: ("collaudo del binario\n\n```\n" + . + "\n```")}' smoke.log > smoke.json
+          grep -qi "panicked" smoke.log && echo "::error::panic all'avvio"
+          {
+            echo "collaudo del binario"
+            echo
+            echo '```'
+            tail -c 20000 smoke.log
+            echo '```'
+            if [ -n "$shot" ]; then
+              echo
+              echo "SCREENSHOT_B64"
+              echo '```'
+              echo "$shot"
+              echo '```'
+            fi
+          } > comment.md
+          jq -Rs '{body: .}' comment.md > smoke.json
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
             --input smoke.json > /dev/null 2>&1 || true
         env:
