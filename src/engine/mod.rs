@@ -799,7 +799,7 @@ async fn send_file(
             height: Some(height),
             is_animated: Some(false),
             sticker_sent_ts: Some(crate::util::now_ts() * 1000),
-            context_info: context,
+            context_info: context.map(|context| MessageField::some(*context)).unwrap_or_default(),
             ..Default::default()
         };
         wa::Message {

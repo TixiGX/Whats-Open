@@ -181,7 +181,7 @@ fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
                     let mut mono: Vec<f32> = Vec::with_capacity(2048);
                     let mut push = push;
                     device.build_input_stream(
-                        &config,
+                        config.clone(),
                         move |data: &[$t], _| {
                             mono.clear();
                             for frame in data.chunks(channels) {
@@ -293,7 +293,7 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
                     let mut up = Up::new(rate);
                     let queue = stream_queue.clone();
                     device.build_output_stream(
-                        &config,
+                        config.clone(),
                         move |data: &mut [$t], _| {
                             let Ok(mut queue) = queue.lock() else {
                                 data.fill(<$t>::from_sample(0i16));

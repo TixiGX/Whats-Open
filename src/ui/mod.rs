@@ -970,7 +970,7 @@ impl App {
         if count > 0 && self.selected.as_deref() != Some(chat_id.as_str()) {
             let title = self
                 .chat(&chat_id)
-                .map(|chat| util::display_name(&chat.name, &chat.id))
+                .map(|chat| self.title_for(chat))
                 .unwrap_or_default();
             self.note(format!("Nuovo messaggio da {title}"));
         }
@@ -1193,7 +1193,7 @@ impl App {
                         let who = if message.from_me {
                             "te stesso".to_string()
                         } else {
-                            util::display_name(&message.sender_name, &message.sender)
+                            self.name_of(&message.sender)
                         };
                         self.reply_label = format!("{who}: {}", message.preview());
                         self.composer_focus = true;

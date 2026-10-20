@@ -19,7 +19,8 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
     let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
         return false;
     };
-    rows.filter_map(|row| row.ok()).any(|name| name == column)
+    let found = rows.filter_map(|row| row.ok()).any(|name| name == column);
+    found
 }
 
 const SCHEMA: &str = r#"

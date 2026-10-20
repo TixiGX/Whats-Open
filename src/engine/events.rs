@@ -155,7 +155,7 @@ pub async fn handle(
             });
         }
         WaEvent::IncomingCall(call) => {
-            call::on_incoming(call.as_ref().clone(), &calls, &sink).await;
+            call::on_incoming(call.clone(), &calls, &sink).await;
         }
         WaEvent::MissedCall(call) => {
             call::missed(call, &sink);

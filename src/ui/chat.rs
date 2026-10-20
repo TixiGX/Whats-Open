@@ -1,7 +1,6 @@
 //! Conversazione: intestazione, messaggi, casella di composizione.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, Sense, TextureHandle, Vec2};
 
@@ -305,7 +304,7 @@ impl App {
                 ui.set_max_width(max_width);
 
                 if !bubble.own && self.messages[index].chat_id.ends_with("@g.us") {
-                    let name = util::display_name(&bubble.sender_name, &bubble.sender);
+                    let name = self.name_of(&bubble.sender);
                     ui.label(RichText::new(name).size(11.0).color(muted));
                     ui.add_space(2.0);
                 }

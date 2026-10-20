@@ -633,13 +633,13 @@ impl App {
                 let caption = if message.text.is_empty() {
                     format!(
                         "{} · {}",
-                        util::display_name(&message.sender_name, &message.sender),
+                        self.name_of(&message.sender),
                         util::fmt_long_time(message.ts)
                     )
                 } else {
                     format!(
                         "{} · {} · {}",
-                        util::display_name(&message.sender_name, &message.sender),
+                        self.name_of(&message.sender),
                         util::fmt_long_time(message.ts),
                         message.text
                     )
