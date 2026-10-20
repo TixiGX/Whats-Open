@@ -28,6 +28,10 @@ pub enum Icon {
     Check,
     Lock,
     ChevronDown,
+    Phone,
+    PhoneOff,
+    MicOff,
+    Gif,
 }
 
 fn map(rect: Rect, x: f32, y: f32) -> Pos2 {
@@ -304,6 +308,75 @@ impl Icon {
                     ],
                     thin,
                 ));
+            }
+            Icon::Phone => {
+                // Cornetta: arco in alto a sinistra, arco in basso a destra.
+                let c = map(rect, 12.0, 12.0);
+                let r = w * 6.6;
+                let mut pts = Vec::new();
+                for i in 0..10 {
+                    let angle = -2.6 + i as f32 * 0.22;
+                    pts.push(Pos2::new(c.x + angle.cos() * r, c.y + angle.sin() * r));
+                }
+                painter.add(egui::Shape::line(pts, thin));
+                painter.add(egui::Shape::line(
+                    vec![
+                        map(rect, 7.2, 4.4),
+                        map(rect, 4.6, 7.0),
+                        map(rect, 5.6, 9.6),
+                        map(rect, 14.4, 18.4),
+                        map(rect, 17.0, 19.4),
+                        map(rect, 19.6, 16.8),
+                        map(rect, 18.6, 14.2),
+                        map(rect, 15.8, 13.2),
+                        map(rect, 14.2, 14.8),
+                        map(rect, 9.4, 10.0),
+                        map(rect, 11.0, 8.4),
+                        map(rect, 10.0, 5.6),
+                        map(rect, 7.2, 4.4),
+                    ],
+                    thin,
+                ));
+            }
+            Icon::PhoneOff => {
+                let c = map(rect, 12.0, 12.0);
+                let r = w * 6.6;
+                let mut pts = Vec::new();
+                for i in 0..10 {
+                    let angle = -2.6 + i as f32 * 0.22;
+                    pts.push(Pos2::new(c.x + angle.cos() * r, c.y + angle.sin() * r));
+                }
+                painter.add(egui::Shape::line(pts, thin));
+                painter.line_segment([map(rect, 5.0, 5.0), map(rect, 19.0, 19.0)], thin);
+            }
+            Icon::MicOff => {
+                let body = Rect::from_min_max(map(rect, 9.0, 3.0), map(rect, 15.0, 13.0));
+                painter.rect_stroke(body, egui::CornerRadius::same(3), thin, StrokeKind::Inside);
+                painter.add(egui::Shape::line(
+                    vec![
+                        map(rect, 6.0, 11.0),
+                        map(rect, 6.0, 13.0),
+                        map(rect, 8.0, 16.5),
+                        map(rect, 12.0, 17.5),
+                        map(rect, 16.0, 16.5),
+                        map(rect, 18.0, 13.0),
+                        map(rect, 18.0, 11.0),
+                    ],
+                    thin,
+                ));
+                painter.line_segment([map(rect, 12.0, 17.5), map(rect, 12.0, 21.0)], thin);
+                painter.line_segment([map(rect, 4.0, 4.0), map(rect, 20.0, 20.0)], thin);
+            }
+            Icon::Gif => {
+                let r = Rect::from_min_max(map(rect, 3.0, 5.5), map(rect, 21.0, 18.5));
+                painter.rect_stroke(r, egui::CornerRadius::same(3), thin, StrokeKind::Inside);
+                painter.text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "GIF",
+                    egui::FontId::proportional((w * 5.4).max(8.0)),
+                    color,
+                );
             }
             Icon::ChevronDown => {
                 painter.add(egui::Shape::line(

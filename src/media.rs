@@ -232,6 +232,51 @@ pub fn is_image_path(path: &Path) -> bool {
     matches!(guess_extension(path).as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp")
 }
 
+pub fn is_gif_path(path: &Path) -> bool {
+    guess_extension(path).as_str() == "gif"
+}
+
+/// Converte una GIF in MP4 H.264. WhatsApp trasporta le GIF come video con
+/// il flag `gifPlayback`: senza conversione il destinatario vedrebbe un
+/// file rotto (o una foto, come succedeva prima).
+pub fn gif_to_mp4(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if !ffmpeg_available() {
+        return Err("ffmpeg non è installato".to_string());
+    }
+    let stamp = crate::util::timestamp_ms();
+    let dir = std::env::temp_dir();
+    let input = dir.join(format!("whats-open-{stamp}.gif"));
+    let output = dir.join(format!("whats-open-{stamp}.mp4"));
+    std::fs::write(&input, bytes).map_err(|err| format!("GIF: {err}"))?;
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-y", "-i"])
+        .arg(&input)
+        .args([
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-an",
+        ])
+        .arg(&output)
+        .status()
+        .map_err(|err| format!("ffmpeg: {err}"))?;
+    let result = if status.success() {
+        std::fs::read(&output).map_err(|err| format!("GIF: {err}"))
+    } else {
+        Err("ffmpeg non è riuscito a convertire la GIF".to_string())
+    };
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&output);
+    result
+}
+
 pub fn is_video_path(path: &Path) -> bool {
     matches!(guess_extension(path).as_str(), "mp4" | "m4v" | "mov" | "3gp" | "webm" | "mkv")
 }

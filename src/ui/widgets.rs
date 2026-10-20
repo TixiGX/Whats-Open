@@ -59,6 +59,40 @@ pub fn avatar(
     }
 }
 
+/// Avatar con foto profilo (angoli arrotondati) e fallback sulle iniziali.
+pub fn avatar_tex(
+    ui: &mut Ui,
+    rect: Rect,
+    texture: Option<&egui::TextureHandle>,
+    name: &str,
+    id: &str,
+    is_group: bool,
+    online: bool,
+) {
+    match texture {
+        Some(texture) => {
+            let radius = (rect.width() * 0.26).clamp(4.0, 16.0) as u8;
+            let _ = ui.put(
+                rect,
+                egui::Image::new(egui::load::SizedTexture::new(texture.id(), rect.size()))
+                    .corner_radius(egui::CornerRadius::same(radius))
+                    .sense(egui::Sense::hover()),
+            );
+            if online {
+                let painter = ui.painter();
+                let radius = rect.width().min(rect.height()) * 0.5;
+                let dot = Pos2::new(
+                    rect.right() - radius * 0.22,
+                    rect.bottom() - radius * 0.22,
+                );
+                painter.circle_filled(dot, (radius * 0.24).max(2.5), Palette::BG);
+                painter.circle_filled(dot, (radius * 0.18).max(2.0), Palette::ONLINE);
+            }
+        }
+        None => avatar(ui.painter(), rect, name, id, is_group, online),
+    }
+}
+
 /// Etichetta di data fra i messaggi.
 pub fn day_separator(ui: &mut Ui, label: &str) {
     ui.add_space(10.0);

@@ -8,7 +8,19 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::model::{Chat, Kind, Message, Status};
+use crate::model::{Chat, Contact, Kind, Message, Status};
+
+/// `true` se la tabella ha già la colonna: serve alle migrazioni leggere
+/// (`ALTER TABLE ... ADD COLUMN` non è idempotente).
+fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let Ok(mut stmt) = conn.prepare(&format!("PRAGMA table_info({table})")) else {
+        return false;
+    };
+    let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
+        return false;
+    };
+    rows.filter_map(|row| row.ok()).any(|name| name == column)
+}
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -54,6 +66,16 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages (chat_id, ts);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    jid       TEXT PRIMARY KEY,
+    name      TEXT NOT NULL DEFAULT '',
+    name_rank INTEGER NOT NULL DEFAULT 0,
+    phone     TEXT NOT NULL DEFAULT '',
+    avatar    BLOB,
+    avatar_ts INTEGER NOT NULL DEFAULT 0,
+    checked   INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 pub struct Store {
@@ -68,6 +90,15 @@ impl Store {
         let conn = Connection::open(path)
             .with_context(|| format!("apertura database {}", path.display()))?;
         conn.execute_batch(SCHEMA).context("creazione schema")?;
+        // Colonne aggiunte dopo la prima release: `ALTER TABLE` solo se
+        // mancano davvero, così i database già esistenti si aggiornano da soli.
+        if !has_column(&conn, "messages", "animated") {
+            conn.execute(
+                "ALTER TABLE messages ADD COLUMN animated INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .ok();
+        }
         Ok(Self { conn })
     }
 
@@ -104,7 +135,7 @@ impl Store {
             "SELECT id, chat_id, sender, sender_name, from_me, ts, kind, body, status,
                     view_once, played, payload, thumb, mime, file_name, file_size,
                     duration, quote_id, quote_name, quote_text, edited, deleted, expire_ts,
-                    reaction
+                    reaction, animated
              FROM messages WHERE chat_id = ?1 ORDER BY ts DESC, rowid DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![chat_id, limit], |row| {
@@ -140,6 +171,7 @@ impl Store {
                 deleted: row.get::<_, i64>(21)? != 0,
                 expire_ts: row.get(22)?,
                 reaction: row.get::<_, Option<String>>(23)?,
+                animated: row.get::<_, i64>(24)? != 0,
                 local_preview: None,
             })
         })?;
@@ -178,6 +210,59 @@ impl Store {
         Ok(())
     }
 
+    /// Sposta una chat (e i suoi messaggi) da un JID a un altro: serve
+    /// quando scopriamo che una conversazione aperta con un LID è in realtà
+    /// lo stesso contatto del numero di telefono.
+    pub fn rename_jid(&self, old_id: &str, new_id: &str) -> Result<()> {
+        if old_id.is_empty() || new_id.is_empty() || old_id == new_id {
+            return Ok(());
+        }
+        let exists: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM chats WHERE id = ?1",
+                params![old_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if exists == 0 {
+            return Ok(());
+        }
+        let target: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM chats WHERE id = ?1",
+                params![new_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if target > 0 {
+            // Destinazione già presente: la vecchia riga è un doppione.
+            self.conn
+                .execute("DELETE FROM chats WHERE id = ?1", params![old_id])?;
+        } else {
+            self.conn
+                .execute("UPDATE chats SET id = ?2 WHERE id = ?1", params![old_id, new_id])?;
+        }
+        self.conn.execute(
+            "UPDATE OR IGNORE messages SET chat_id = ?2 WHERE chat_id = ?1",
+            params![old_id, new_id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM messages WHERE chat_id = ?1",
+            params![old_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_chat(&self, chat_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM chats WHERE id = ?1", params![chat_id])?;
+        Ok(())
+    }
+
     pub fn set_chat_name(&self, chat_id: &str, name: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE chats SET name = ?2 WHERE id = ?1",
@@ -197,9 +282,10 @@ impl Store {
             "INSERT OR IGNORE INTO messages (
                 id, chat_id, sender, sender_name, from_me, ts, kind, body, status,
                 view_once, played, payload, thumb, mime, file_name, file_size, duration,
-                quote_id, quote_name, quote_text, edited, deleted, expire_ts, reaction
+                quote_id, quote_name, quote_text, edited, deleted, expire_ts, reaction,
+                animated
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                       ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                       ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 message.id,
                 message.chat_id,
@@ -225,6 +311,7 @@ impl Store {
                 message.deleted as i64,
                 message.expire_ts,
                 message.reaction,
+                message.animated as i64,
             ],
         )?;
         Ok(changed > 0)
@@ -243,9 +330,10 @@ impl Store {
                 "INSERT OR IGNORE INTO messages (
                     id, chat_id, sender, sender_name, from_me, ts, kind, body, status,
                     view_once, played, payload, thumb, mime, file_name, file_size, duration,
-                    quote_id, quote_name, quote_text, edited, deleted, expire_ts, reaction
+                    quote_id, quote_name, quote_text, edited, deleted, expire_ts, reaction,
+                    animated
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                           ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                           ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
                 params![
                     message.id,
                     message.chat_id,
@@ -271,6 +359,7 @@ impl Store {
                     message.deleted as i64,
                     message.expire_ts,
                     message.reaction,
+                    message.animated as i64,
                 ],
             )?;
             if changed > 0 {
@@ -308,13 +397,44 @@ impl Store {
     }
 
     pub fn rename_message_id(&self, chat_id: &str, old_id: &str, new_id: &str, ts: i64) -> Result<()> {
+        // Se l'eco del server è già arrivata esiste una riga con `new_id`:
+        // quella è la verità (payload, stato, miniatura), quindi la copia
+        // locale va rimossa invece di restare lì come duplicato.
         self.conn
             .execute(
-                "UPDATE OR IGNORE messages SET id = ?3, ts = ?4 WHERE chat_id = ?1 AND id = ?2",
+                "DELETE FROM messages WHERE chat_id = ?1 AND id = ?2
+                   AND EXISTS (SELECT 1 FROM messages WHERE chat_id = ?1 AND id = ?3)",
+                params![chat_id, old_id, new_id],
+            )
+            .ok();
+        self.conn
+            .execute(
+                "UPDATE OR IGNORE messages SET id = ?3, ts = ?4, status = 'sent'
+                  WHERE chat_id = ?1 AND id = ?2",
                 params![chat_id, old_id, new_id, ts],
             )
             .ok();
         Ok(())
+    }
+
+    /// Id di una bolla locale ancora in attesa che corrisponda all'eco del
+    /// server (stesso testo, stesso minuto): evita il doppione quando il
+    /// server rimanda indietro il messaggio appena inviato.
+    pub fn find_pending(&self, chat_id: &str, body: &str, ts: i64) -> Option<String> {
+        self.conn
+            .query_row(
+                "SELECT id FROM messages
+                  WHERE chat_id = ?1 AND body = ?2 AND from_me = 1
+                    AND status IN ('pending', 'sent', 'delivered')
+                    AND id LIKE 'local-%'
+                    AND ABS(ts - ?3) <= 300
+                  ORDER BY ABS(ts - ?3) LIMIT 1",
+                params![chat_id, body, ts],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
     }
 
     pub fn set_played(&self, chat_id: &str, message_id: &str) -> Result<()> {
@@ -409,7 +529,7 @@ impl Store {
 
     pub fn wipe(&self) -> Result<()> {
         self.conn
-            .execute_batch("DELETE FROM messages; DELETE FROM chats;")
+            .execute_batch("DELETE FROM messages; DELETE FROM chats; DELETE FROM contacts;")
             .context("svuotamento archivio")?;
         Ok(())
     }
@@ -427,6 +547,104 @@ impl Store {
             out.push(row?);
         }
         Ok(out)
+    }
+}
+
+impl Store {
+    pub fn load_contacts(&self) -> Result<Vec<Contact>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT jid, name, name_rank, phone, avatar FROM contacts")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Contact {
+                jid: row.get(0)?,
+                name: row.get(1)?,
+                rank: row.get::<_, i64>(2)?.max(0) as u8,
+                phone: row.get(3)?,
+                avatar: row.get::<_, Option<Vec<u8>>>(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn save_contact(&self, contact: &Contact, stamp: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO contacts (jid, name, name_rank, phone, avatar, avatar_ts, checked)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)
+             ON CONFLICT(jid) DO UPDATE SET
+                name = CASE WHEN ?3 >= contacts.name_rank AND ?2 <> ''
+                            THEN ?2 ELSE contacts.name END,
+                name_rank = MAX(contacts.name_rank, ?3),
+                phone = CASE WHEN ?4 <> '' THEN ?4 ELSE contacts.phone END,
+                avatar = CASE WHEN ?6 >= contacts.avatar_ts THEN ?5 ELSE contacts.avatar END,
+                avatar_ts = MAX(contacts.avatar_ts, ?6),
+                checked = 1",
+            params![
+                contact.jid,
+                contact.name,
+                contact.rank as i64,
+                contact.phone,
+                contact.avatar,
+                stamp,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_contact_name(&self, jid: &str, name: &str, rank: u8) -> Result<()> {
+        if jid.is_empty() || name.trim().is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO contacts (jid, name, name_rank, phone)
+             VALUES (?1, ?2, ?3, '')
+             ON CONFLICT(jid) DO UPDATE SET
+                name = CASE WHEN ?3 >= contacts.name_rank THEN ?2 ELSE contacts.name END,
+                name_rank = MAX(contacts.name_rank, ?3)",
+            params![jid, name.trim(), rank as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_contact_phone(&self, jid: &str, phone: &str) -> Result<()> {
+        if jid.is_empty() || phone.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO contacts (jid, phone) VALUES (?1, ?2)
+             ON CONFLICT(jid) DO UPDATE SET phone = ?2",
+            params![jid, phone],
+        )?;
+        Ok(())
+    }
+
+    /// Salva la foto profilo. `bytes` vuoto = nessuna foto disponibile: la
+    /// riga resta con `checked = 1` per non ritentare a ogni avvio.
+    pub fn set_contact_avatar(&self, jid: &str, bytes: Option<&[u8]>, stamp: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO contacts (jid, avatar, avatar_ts, checked) VALUES (?1, ?2, ?3, 1)
+             ON CONFLICT(jid) DO UPDATE SET avatar = ?2, avatar_ts = ?3, checked = 1",
+            params![jid, bytes, stamp],
+        )?;
+        Ok(())
+    }
+
+    pub fn contact_checked(&self, jid: &str) -> bool {
+        self.conn
+            .query_row(
+                "SELECT checked FROM contacts WHERE jid = ?1",
+                params![jid],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            != 0
     }
 }
 

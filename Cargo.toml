@@ -53,6 +53,12 @@ whatsapp-rust = { version = "=0.7.0", default-features = false, features = [
     "tokio-runtime",
     "ureq-client",
     "tokio-native",
+    # Chiamate vocali 1:1. `voip-mlow` è il codec MLow di WhatsApp riscritto
+    # interamente in Rust: nessuna libreria C, nessun ffmpeg, e il binario
+    # resta statico anche su musl. Il video delle videochiamate resta fuori
+    # scope (servirebbe un encoder H.264): le videochiamate si rispondono in
+    # sola audio, come fa WhatsApp quando la fotocamera non è disponibile.
+    "voip-mlow",
 ] }
 
 # Profilo pensato per compilare anche su portatili con 4-8 GB di RAM:

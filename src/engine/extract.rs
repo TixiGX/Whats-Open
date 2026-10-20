@@ -70,7 +70,14 @@ pub fn quoted_preview(message: &wa::Message) -> String {
     if base.image_message.is_set() {
         return "Foto".to_string();
     }
-    if base.video_message.is_set() || base.ptv_message.is_set() {
+    if let Some(video) = base.video_message.as_option() {
+        return if video.gif_playback == Some(true) {
+            "GIF".to_string()
+        } else {
+            "Video".to_string()
+        };
+    }
+    if base.ptv_message.is_set() {
         return "Video".to_string();
     }
     if let Some(audio) = base.audio_message.as_option() {
@@ -111,7 +118,10 @@ pub fn build(
         ts,
         status: Status::Sent,
         view_once: message.is_view_once(),
-        payload: codec::message_to_vec(message),
+        // Salvo il contenuto già srotolato: i wrapper (view-once, effimero,
+        // device-sent) non servono più e un download diretto funziona anche
+        // se in futuro cambiassero i livelli di annidamento.
+        payload: codec::message_to_vec(base),
         ..Default::default()
     };
 
@@ -148,7 +158,11 @@ pub fn build(
     }
 
     if let Some(video) = base.video_message.as_option() {
-        out.kind = Kind::Video;
+        out.kind = if video.gif_playback == Some(true) {
+            Kind::Gif
+        } else {
+            Kind::Video
+        };
         out.text = video
             .caption
             .clone()
@@ -208,6 +222,7 @@ pub fn build(
 
     if let Some(sticker) = base.sticker_message.as_option() {
         out.kind = Kind::Sticker;
+        out.animated = sticker.is_animated == Some(true) || sticker.is_lottie == Some(true);
         out.mime = sticker
             .mimetype
             .clone()

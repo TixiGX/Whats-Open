@@ -24,6 +24,8 @@ pub struct VideoPlayer {
     child: Arc<Mutex<Option<Child>>>,
     pub audio: Option<AudioPlayer>,
     pub frame: Option<Vec<u8>>,
+    /// GIF: riparte da sola a fine clip.
+    pub looping: bool,
 }
 
 impl VideoPlayer {
@@ -53,6 +55,7 @@ impl VideoPlayer {
             child,
             audio,
             frame: None,
+            looping: false,
         };
         player.poll_frame();
         Ok(player)
@@ -158,6 +161,10 @@ impl VideoPlayer {
     pub fn seek(&mut self, seconds: f64) {
         let target = seconds.clamp(0.0, self.duration.max(0.0));
         self.restart(target);
+    }
+
+    pub fn set_looping(&mut self, looping: bool) {
+        self.looping = looping;
     }
 
     pub fn at_end(&self) -> bool {

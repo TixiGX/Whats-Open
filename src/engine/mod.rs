@@ -4,6 +4,7 @@
 //! gli manda comandi e riceve eventi già normalizzati, senza mai toccare
 //! direttamente il socket o le chiavi.
 
+pub mod call;
 pub mod events;
 pub mod extract;
 
@@ -14,6 +15,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use whatsapp_rust::download::MediaType;
+use whatsapp_rust::http::{HttpClient, HttpRequest, UreqHttpClient};
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::upload::UploadOptions;
@@ -67,6 +69,20 @@ pub enum Cmd {
     Typing {
         chat: String,
         composing: bool,
+    },
+    /// Scarica la foto profilo (anteprima) di un contatto o di un gruppo.
+    Avatar {
+        jid: String,
+    },
+    /// Chiamata vocale in uscita.
+    CallStart {
+        chat: String,
+    },
+    CallAccept,
+    CallReject,
+    CallHangup,
+    CallMute {
+        muted: bool,
     },
     React {
         chat: String,
@@ -126,6 +142,31 @@ pub enum Event {
     Revoked { chat: String, id: String },
     Reaction { chat: String, id: String, emoji: Option<String> },
     Undecryptable,
+    /// Nome di un contatto (3 = rubrica, 2 = push name, 1 = storico).
+    Contact { jid: String, name: String, rank: u8 },
+    /// Mappatura LID ↔ numero di telefono.
+    Alias { lid: String, pn: String },
+    /// Foto profilo: `None` = nessuna foto (o rimossa).
+    Avatar { jid: String, bytes: Option<Vec<u8>> },
+    Call { phase: CallPhase, peer: String, video: bool },
+    CallMissed { peer: String, video: bool },
+    /// Avviso da mostrare all'utente senza interrompere nulla.
+    Notice(String),
+}
+
+/// Fase della chiamata in corso.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallPhase {
+    /// Squilla sul nostro dispositivo.
+    Ringing,
+    /// Chiamata in uscita, in attesa che l'altro risponda.
+    Dialing,
+    /// In corso di connessione del media.
+    Connecting,
+    /// Audio collegato.
+    Active,
+    /// Finita (o rifiutata, o persa).
+    Ended,
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -237,6 +278,7 @@ fn run(
         };
 
         let groups: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let call_state = call::new_session();
 
         let qr_sink = sink.clone();
         let logout_sink = sink.clone();
@@ -245,6 +287,7 @@ fn run(
         let pair_error_sink = sink.clone();
         let event_sink = sink.clone();
         let handler_groups = groups.clone();
+        let handler_calls = call_state.clone();
 
         let mut builder = Bot::builder()
             .with_backend(store)
@@ -266,6 +309,25 @@ fn run(
                             jid: client.pn().map(|jid| jid.to_string()).unwrap_or_default(),
                         },
                     );
+                    // Privacy: niente "online" per i contatti. La libreria
+                    // annuncia `available` da sola alla connessione (e dopo
+                    // la sincronizzazione del push name), quindi la
+                    // riportiamo a `unavailable` un paio di volte: la prima
+                    // subito, le altre per coprire quei percorsi. I
+                    // giustificativi di consegna restano attivi, così i
+                    // messaggi risultano recapitati.
+                    let client = client.clone();
+                    tokio::spawn(async move {
+                        client.set_force_active_delivery_receipts(true);
+                        for delay in [0u64, 1200, 4000] {
+                            if delay > 0 {
+                                tokio::time::sleep(Duration::from_millis(delay)).await;
+                            }
+                            if let Err(err) = client.presence().set_unavailable().await {
+                                log::debug!("presence unavailable: {err}");
+                            }
+                        }
+                    });
                 }
             })
             .on_pair_code(move |code: String, _timeout: Duration| {
@@ -289,8 +351,9 @@ fn run(
             .on_event(move |event: Arc<whatsapp_rust::types::events::Event>, client: Arc<Client>| {
                 let sink = event_sink.clone();
                 let groups = handler_groups.clone();
+                let calls = handler_calls.clone();
                 async move {
-                    events::handle(event, client, sink, groups).await;
+                    events::handle(event, client, sink, groups, calls).await;
                 }
             });
 
@@ -315,8 +378,9 @@ fn run(
 
         let command_client = client.clone();
         let command_sink = sink.clone();
+        let command_calls = call_state.clone();
         let command_task = tokio::spawn(async move {
-            command_loop(command_client, cmd_rx, command_sink).await;
+            command_loop(command_client, cmd_rx, command_sink, command_calls).await;
         });
 
         // Il bot gira finché la sessione resta viva; alla disconnessione
@@ -326,7 +390,12 @@ fn run(
     });
 }
 
-async fn command_loop(client: Arc<Client>, mut rx: UnboundedReceiver<Cmd>, sink: EventSink) {
+async fn command_loop(
+    client: Arc<Client>,
+    mut rx: UnboundedReceiver<Cmd>,
+    sink: EventSink,
+    calls: call::SharedCall,
+) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             Cmd::Quit => {
@@ -357,7 +426,14 @@ async fn command_loop(client: Arc<Client>, mut rx: UnboundedReceiver<Cmd>, sink:
                     };
 
                     let message = build_text(&text, reply.as_ref());
-                    match client.send_message(&jid, message).await {
+                    // L'id lo scegliamo noi: l'eco del server porta lo stesso
+                    // id della bolla già a schermo, quindi non si sdoppia.
+                    let options = whatsapp_rust::SendOptions::default()
+                        .with_message_id(local_id.clone());
+                    match client
+                        .send_message_with_options(&jid, message, options)
+                        .await
+                    {
                         Ok(result) => emit(
                             &sink,
                             Event::Sent {
@@ -399,6 +475,7 @@ async fn command_loop(client: Arc<Client>, mut rx: UnboundedReceiver<Cmd>, sink:
                         &caption,
                         reply.as_ref(),
                         voice.as_ref(),
+                        &local_id,
                     )
                     .await
                     {
@@ -463,15 +540,53 @@ async fn command_loop(client: Arc<Client>, mut rx: UnboundedReceiver<Cmd>, sink:
                 });
             }
             Cmd::Typing { chat, composing } => {
+                // Volutamente inerte: l'app non annuncia né "online" né
+                // "sta scrivendo". Il comando resta per compatibilità.
+                log::debug!("chatstate ignorato ({composing}): {chat}");
+            }
+            Cmd::Avatar { jid } => {
                 let client = client.clone();
+                let sink = sink.clone();
                 tokio::spawn(async move {
-                    let Some(jid) = parse_jid(&chat) else { return };
-                    let feature = client.chatstate();
-                    if composing {
-                        let _ = feature.send_composing(&jid).await;
-                    } else {
-                        let _ = feature.send_paused(&jid).await;
-                    }
+                    let bytes = fetch_avatar(&client, &jid).await;
+                    emit(&sink, Event::Avatar { jid, bytes });
+                });
+            }
+            Cmd::CallStart { chat } => {
+                let client = client.clone();
+                let sink = sink.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::start_outgoing(client, chat, calls, sink).await;
+                });
+            }
+            Cmd::CallAccept => {
+                let client = client.clone();
+                let sink = sink.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::accept(client, calls, sink).await;
+                });
+            }
+            Cmd::CallReject => {
+                let client = client.clone();
+                let sink = sink.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::reject(client, calls, sink).await;
+                });
+            }
+            Cmd::CallHangup => {
+                let sink = sink.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::hangup(calls, sink).await;
+                });
+            }
+            Cmd::CallMute { muted } => {
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::set_muted(calls, muted).await;
                 });
             }
             Cmd::React {
@@ -554,6 +669,32 @@ async fn command_loop(client: Arc<Client>, mut rx: UnboundedReceiver<Cmd>, sink:
     }
 }
 
+/// Scarica l'anteprima della foto profilo: prima l'URL con l'IQ, poi i byte
+/// dal CDN. Le foto profilo non sono cifrate, quindi basta una GET.
+pub(crate) async fn fetch_avatar(client: &Arc<Client>, jid: &str) -> Option<Vec<u8>> {
+    let jid: Jid = jid.parse().ok()?;
+    let picture = client
+        .contacts()
+        .get_profile_picture(&jid, true)
+        .await
+        .ok()
+        .flatten()?;
+    if picture.url.is_empty() {
+        return None;
+    }
+    let http = UreqHttpClient::new();
+    let mut request = HttpRequest::get(picture.url);
+    request
+        .headers
+        .insert("User-Agent".to_string(), "WhatsApp/2.26.0".to_string());
+    let response = http.execute(request).await.ok()?;
+    if response.status_code == 200 && !response.body.is_empty() {
+        Some(response.body)
+    } else {
+        None
+    }
+}
+
 fn build_text(text: &str, reply: Option<&ReplyTarget>) -> wa::Message {
     match reply {
         None => wa::Message::text(text),
@@ -595,6 +736,7 @@ async fn send_file(
     caption: &str,
     reply: Option<&ReplyTarget>,
     voice: Option<&(u32, Vec<u8>)>,
+    message_id: &str,
 ) -> Result<String, String> {
     let jid = parse_jid(chat).ok_or_else(|| "Chat non valida".to_string())?;
     let data = tokio::fs::read(path)
@@ -612,18 +754,22 @@ async fn send_file(
     let context = reply_context(reply);
 
     let is_voice = voice.is_some();
-    let is_image = !is_voice && crate::media::is_image_path(path);
-    let is_video = !is_voice && crate::media::is_video_path(path);
+    let is_sticker = !is_voice && mime == "image/webp";
+    let is_gif = !is_voice && !is_sticker && crate::media::is_gif_path(path);
+    let is_image = !is_voice && !is_gif && !is_sticker && crate::media::is_image_path(path);
+    let is_video = !is_voice && (crate::media::is_video_path(path) || is_gif);
     let is_audio = !is_voice && crate::media::is_audio_path(path);
-    let is_video = is_video
-        || (!is_voice
-            && path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("gif"))
-                .unwrap_or(false));
 
-    let media_type = if is_image {
+    // Le GIF viaggiano come video H.264 con `gifPlayback`.
+    let data = if is_gif {
+        crate::media::gif_to_mp4(&data)?
+    } else {
+        data
+    };
+
+    let media_type = if is_sticker {
+        MediaType::Sticker
+    } else if is_image {
         MediaType::Image
     } else if is_video {
         MediaType::Video
@@ -638,7 +784,29 @@ async fn send_file(
         .await
         .map_err(|err| format!("Caricamento: {err}"))?;
 
-    let message = if is_image {
+    let message = if is_sticker {
+        let (width, height) = crate::media::image_dimensions(&data).unwrap_or((512, 512));
+        let sticker = wa::message::StickerMessage {
+            url: Some(upload.url),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            media_key: Some(upload.media_key.to_vec()),
+            media_key_timestamp: Some(upload.media_key_timestamp),
+            direct_path: Some(upload.direct_path),
+            file_length: Some(upload.file_length),
+            mimetype: Some("image/webp".to_string()),
+            width: Some(width),
+            height: Some(height),
+            is_animated: Some(false),
+            sticker_sent_ts: Some(crate::util::now_ts() * 1000),
+            context_info: context,
+            ..Default::default()
+        };
+        wa::Message {
+            sticker_message: MessageField::some(sticker),
+            ..Default::default()
+        }
+    } else if is_image {
         whatsapp_rust::media::image_message(
             upload,
             whatsapp_rust::media::ImageOptions {
@@ -649,18 +817,31 @@ async fn send_file(
             },
         )
     } else if is_video {
-        let info = crate::media::probe_video(path);
+        let info = if is_gif {
+            crate::media::VideoInfo::default()
+        } else {
+            crate::media::probe_video(path)
+        };
         whatsapp_rust::media::video_message(
             upload,
             whatsapp_rust::media::VideoOptions {
                 caption,
-                mimetype: Some(mime.to_string()),
-                jpeg_thumbnail: None,
+                mimetype: Some(if is_gif {
+                    "video/mp4".to_string()
+                } else {
+                    mime.to_string()
+                }),
+                jpeg_thumbnail: if is_gif {
+                    crate::media::video_thumbnail(path)
+                } else {
+                    None
+                },
                 duration_seconds: if info.duration > 0.0 {
                     Some(info.duration.round() as u32)
                 } else {
                     None
                 },
+                gif_playback: if is_gif { Some(true) } else { None },
                 context_info: context,
                 ..Default::default()
             },
@@ -707,8 +888,9 @@ async fn send_file(
         )
     };
 
+    let options = whatsapp_rust::SendOptions::default().with_message_id(message_id.to_string());
     client
-        .send_message(&jid, message)
+        .send_message_with_options(&jid, message, options)
         .await
         .map(|result| result.message_id)
         .map_err(|err| format!("Invio: {err}"))

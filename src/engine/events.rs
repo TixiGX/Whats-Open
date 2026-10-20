@@ -7,8 +7,9 @@ use whatsapp_rust::prelude::*;
 use whatsapp_rust::types::presence::{ChatPresence, ReceiptType};
 use whatsapp_rust::types::events::Event as WaEvent;
 
+use super::call;
 use super::extract::{self, Extracted};
-use super::{emit, Event, EventSink};
+use super::{emit, fetch_avatar, Event, EventSink};
 use crate::model::{Chat, Message, Status};
 
 pub async fn handle(
@@ -16,11 +17,13 @@ pub async fn handle(
     client: Arc<Client>,
     sink: EventSink,
     groups: Arc<Mutex<HashSet<String>>>,
+    calls: call::SharedCall,
 ) {
     match event.as_ref() {
         WaEvent::Messages(batch) => {
             let mut out: Vec<Message> = Vec::new();
             for inbound in batch.messages.iter() {
+                learn_from_info(&sink, inbound.info.as_ref());
                 match extract::extract(inbound.message.as_ref(), inbound.info.as_ref()) {
                     Extracted::New(message) => {
                         if message.kind == crate::model::Kind::Other && message.text.is_empty() {
@@ -88,6 +91,85 @@ pub async fn handle(
         WaEvent::HistorySync(sync) => {
             import_history(sync, &client, &sink, &groups);
         }
+        WaEvent::ContactUpdate(update) => {
+            let jid = update.jid.to_string();
+            let name = update
+                .action
+                .full_name
+                .clone()
+                .or_else(|| update.action.first_name.clone())
+                .unwrap_or_default();
+            if !name.trim().is_empty() {
+                emit(
+                    &sink,
+                    Event::Contact {
+                        jid: jid.clone(),
+                        name,
+                        rank: 3,
+                    },
+                );
+            }
+            if let (Some(lid), Some(pn)) = (update.action.lid_jid.clone(), update.action.pn_jid.clone())
+            {
+                emit_alias(&sink, &lid, &pn);
+            }
+        }
+        WaEvent::PushNameUpdate(update) => {
+            if !update.new_push_name.trim().is_empty() {
+                emit(
+                    &sink,
+                    Event::Contact {
+                        jid: update.jid.to_string(),
+                        name: update.new_push_name.clone(),
+                        rank: 2,
+                    },
+                );
+            }
+        }
+        WaEvent::PictureUpdate(update) => {
+            let jid = update.jid.to_string();
+            if update.removed {
+                emit(
+                    &sink,
+                    Event::Avatar {
+                        jid,
+                        bytes: None,
+                    },
+                );
+            } else {
+                let client = client.clone();
+                let sink = sink.clone();
+                tokio::spawn(async move {
+                    let bytes = fetch_avatar(&client, &jid).await;
+                    emit(&sink, Event::Avatar { jid, bytes });
+                });
+            }
+        }
+        WaEvent::ContactUpdated(update) => {
+            let jid = update.jid.to_string();
+            let client = client.clone();
+            let sink = sink.clone();
+            tokio::spawn(async move {
+                let bytes = fetch_avatar(&client, &jid).await;
+                emit(&sink, Event::Avatar { jid, bytes });
+            });
+        }
+        WaEvent::IncomingCall(call) => {
+            call::on_incoming(call.as_ref().clone(), &calls, &sink).await;
+        }
+        WaEvent::MissedCall(call) => {
+            call::missed(call, &sink);
+        }
+        WaEvent::CallEndedElsewhere(_) => {
+            emit(
+                &sink,
+                Event::Call {
+                    phase: crate::engine::CallPhase::Ended,
+                    peer: String::new(),
+                    video: false,
+                },
+            );
+        }
         WaEvent::UndecryptableMessage(_) => {
             emit(&sink, Event::Undecryptable);
         }
@@ -112,6 +194,70 @@ pub async fn handle(
         }
         _ => {}
     }
+}
+
+/// Impara nome e numero di telefono da un messaggio in arrivo: ogni stanza
+/// porta il push name del mittente e, per i DM, anche l'altro indirizzo
+/// (LID o numero). Senza questo passaggio i contatti resterebbero anonimi
+/// finché non arriva un evento dedicato, che WhatsApp manda di rado.
+fn learn_from_info(sink: &EventSink, info: &MessageInfo) {
+    let sender = clean_jid(&info.source.sender.to_string());
+    if let Some(alt) = info.source.sender_alt.as_ref() {
+        let alt = clean_jid(&alt.to_string());
+        let (lid, pn) = if sender.ends_with("@lid") {
+            (sender.clone(), alt)
+        } else {
+            (alt, sender.clone())
+        };
+        emit_alias(sink, &lid, &pn);
+    }
+    if info.source.is_from_me || info.push_name.trim().is_empty() {
+        return;
+    }
+    let name = info.push_name.trim().to_string();
+    emit(
+        sink,
+        Event::Contact {
+            jid: sender.clone(),
+            name: name.clone(),
+            rank: 2,
+        },
+    );
+    if !info.source.is_group {
+        let chat = clean_jid(&info.source.chat.to_string());
+        if chat != sender {
+            emit(
+                sink,
+                Event::Contact {
+                    jid: chat,
+                    name,
+                    rank: 2,
+                },
+            );
+        }
+    }
+}
+
+/// Manda alla UI la mappatura LID ↔ numero, scartando le righe incoerenti.
+fn emit_alias(sink: &EventSink, lid: &str, pn: &str) {
+    if lid.is_empty() || pn.is_empty() || !lid.ends_with("@lid") || !pn.ends_with("@s.whatsapp.net")
+    {
+        return;
+    }
+    emit(
+        sink,
+        Event::Alias {
+            lid: lid.to_string(),
+            pn: pn.to_string(),
+        },
+    );
+}
+
+/// Normalizza un JID togliendo il suffisso del dispositivo (`:12`).
+fn clean_jid(raw: &str) -> String {
+    raw.parse::<Jid>()
+        .map(|jid| jid.to_non_ad().to_string())
+        .unwrap_or_else(|_| raw.to_string())
 }
 
 fn ensure_group_name(
@@ -181,6 +327,30 @@ fn import_history(
         return;
     };
 
+    // Nomi e mappature arrivano insieme allo storico: sono la sorgente più
+    // ricca di nomi per chi non ha ancora ricevuto un messaggio.
+    for pushname in history.pushnames.iter() {
+        let (Some(id), Some(name)) = (pushname.id.as_ref(), pushname.pushname.as_ref()) else {
+            continue;
+        };
+        if name.trim().is_empty() {
+            continue;
+        }
+        emit(
+            sink,
+            Event::Contact {
+                jid: clean_jid(id),
+                name: name.clone(),
+                rank: 2,
+            },
+        );
+    }
+    for mapping in history.phone_number_to_lid_mappings.iter() {
+        if let (Some(pn), Some(lid)) = (mapping.pn_jid.as_ref(), mapping.lid_jid.as_ref()) {
+            emit_alias(sink, &clean_jid(lid), &clean_jid(pn));
+        }
+    }
+
     let mut chats: Vec<Chat> = Vec::new();
     let mut messages: Vec<Message> = Vec::new();
     let mut budget: usize = 6000;
@@ -222,6 +392,17 @@ fn import_history(
 
         if is_group {
             ensure_group_name(client, sink, groups, &chat_id);
+        } else if !name.trim().is_empty() {
+            // Nella chat 1:1 il nome della conversazione è il nome in
+            // rubrica: ha la precedenza sul push name.
+            emit(
+                sink,
+                Event::Contact {
+                    jid: chat_id.clone(),
+                    name: name.clone(),
+                    rank: 3,
+                },
+            );
         }
 
         chats.push(Chat {

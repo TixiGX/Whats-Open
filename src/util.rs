@@ -205,6 +205,21 @@ pub fn phone_display(user: &str) -> String {
     }
 }
 
+/// Vero se il testo è solo un numero di telefono (con eventuale prefisso,
+/// spazi o trattini): serve a non salvare un numero come nome del contatto.
+pub fn looks_like_phone(text: &str) -> bool {
+    let trimmed = text.trim();
+    let mut digits = 0usize;
+    for ch in trimmed.chars() {
+        match ch {
+            '0'..='9' => digits += 1,
+            '+' | ' ' | '-' | '(' | ')' | '.' => {}
+            _ => return false,
+        }
+    }
+    digits >= 6
+}
+
 /// Nome da mostrare: nome salvato, push name, oppure numero/ID.
 pub fn display_name(name: &str, jid: &str) -> String {
     if !name.trim().is_empty() {

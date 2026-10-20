@@ -106,17 +106,23 @@ impl App {
                 let mut shown = 0;
                 for index in 0..count {
                     let chat = self.chats[index].clone();
+                    let title = self.title_for(&chat);
                     if !query.is_empty() {
-                        let title = util::display_name(&chat.name, &chat.id).to_lowercase();
-                        if !title.contains(&query) && !chat.preview.to_lowercase().contains(&query) {
+                        if !title.to_lowercase().contains(&query)
+                            && !chat.preview.to_lowercase().contains(&query)
+                        {
                             continue;
                         }
                     }
                     shown += 1;
                     let selected = self.selected.as_deref() == Some(chat.id.as_str());
                     let typing = chat.typing;
-                    if chat_row(ui, &chat, selected, typing).clicked() {
+                    let texture = self.avatars.get(&chat.id).cloned();
+                    if chat_row(ui, &chat, &title, texture.as_ref(), selected, typing).clicked() {
                         chosen = Some(chat.id.clone());
+                    }
+                    if texture.is_none() {
+                        self.request_avatar(&chat.id);
                     }
                 }
                 if shown == 0 {
@@ -141,34 +147,43 @@ impl App {
     }
 }
 
-fn chat_row(ui: &mut egui::Ui, chat: &Chat, selected: bool, typing: bool) -> Response {
+fn chat_row(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    title: &str,
+    texture: Option<&egui::TextureHandle>,
+    selected: bool,
+    typing: bool,
+) -> Response {
     let height = 68.0;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
 
-    let painter = ui.painter();
-
-    if selected {
-        painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::SURFACE);
-    } else if response.hovered() {
-        painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::PANEL);
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    {
+        let painter = ui.painter();
+        if selected {
+            painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::SURFACE);
+        } else if response.hovered() {
+            painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::PANEL);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
     }
 
     let avatar_rect = Rect::from_center_size(
         Pos2::new(rect.left() + 37.0, rect.center().y),
         Vec2::splat(46.0),
     );
-    let title = util::display_name(&chat.name, &chat.id);
-    widgets::avatar(
-        painter,
+    widgets::avatar_tex(
+        ui,
         avatar_rect,
+        texture,
         &chat.name,
         &chat.id,
         chat.is_group,
         chat.online,
     );
 
+    let painter = ui.painter();
     let text_left = rect.left() + 68.0;
     let name_color = if chat.unread > 0 {
         Palette::WHITE
@@ -178,7 +193,7 @@ fn chat_row(ui: &mut egui::Ui, chat: &Chat, selected: bool, typing: bool) -> Res
     painter.text(
         Pos2::new(text_left, rect.center().y - 10.0),
         Align2::LEFT_CENTER,
-        util::truncate(&title, 26),
+        util::truncate(title, 26),
         FontId::proportional(14.0),
         name_color,
     );

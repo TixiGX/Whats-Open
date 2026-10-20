@@ -6,6 +6,9 @@ use crate::util;
 pub enum Kind {
     Text,
     Image,
+    /// Clip inviata come GIF: WhatsApp la trasporta come video con
+    /// `gifPlayback`, ma va mostrata e riprodotta in loop come una GIF.
+    Gif,
     Video,
     Voice,
     Audio,
@@ -22,6 +25,7 @@ impl Kind {
         match self {
             Kind::Text => "text",
             Kind::Image => "image",
+            Kind::Gif => "gif",
             Kind::Video => "video",
             Kind::Voice => "voice",
             Kind::Audio => "audio",
@@ -38,6 +42,7 @@ impl Kind {
         match value {
             "text" => Kind::Text,
             "image" => Kind::Image,
+            "gif" => Kind::Gif,
             "video" => Kind::Video,
             "voice" => Kind::Voice,
             "audio" => Kind::Audio,
@@ -54,6 +59,7 @@ impl Kind {
         match self {
             Kind::Text => "",
             Kind::Image => "Foto",
+            Kind::Gif => "GIF",
             Kind::Video => "Video",
             Kind::Voice => "Messaggio vocale",
             Kind::Audio => "Audio",
@@ -69,12 +75,18 @@ impl Kind {
     pub fn is_media(self) -> bool {
         matches!(
             self,
-            Kind::Image | Kind::Video | Kind::Voice | Kind::Audio | Kind::Document | Kind::Sticker
+            Kind::Image
+                | Kind::Gif
+                | Kind::Video
+                | Kind::Voice
+                | Kind::Audio
+                | Kind::Document
+                | Kind::Sticker
         )
     }
 
     pub fn is_playable(self) -> bool {
-        matches!(self, Kind::Video | Kind::Voice | Kind::Audio)
+        matches!(self, Kind::Video | Kind::Gif | Kind::Voice | Kind::Audio)
     }
 }
 
@@ -144,6 +156,9 @@ pub struct Message {
     pub deleted: bool,
     pub expire_ts: i64,
     pub reaction: Option<String>,
+    /// Sticker animato (WebP animato o Lottie): in bolla si vede il primo
+    /// fotogramma, con l'etichetta "animato".
+    pub animated: bool,
     /// Miniatura dell'allegato che stiamo inviando (solo in memoria).
     pub local_preview: Option<Vec<u8>>,
 }
@@ -173,6 +188,7 @@ impl Default for Message {
             deleted: false,
             expire_ts: 0,
             reaction: None,
+            animated: false,
             local_preview: None,
         }
     }
@@ -188,6 +204,7 @@ impl Message {
         }
         match self.kind {
             Kind::Sticker => String::new(),
+            Kind::Gif => "GIF".to_string(),
             _ => self.kind.label().to_string(),
         }
     }
@@ -197,12 +214,21 @@ impl Message {
         if self.deleted {
             return "Messaggio eliminato".to_string();
         }
+        if self.view_once && !self.played {
+            return match self.kind {
+                Kind::Voice | Kind::Audio => "Vocale · una volta".to_string(),
+                Kind::Video | Kind::Gif => "Video · una volta".to_string(),
+                Kind::Image => "Foto · una volta".to_string(),
+                _ => "Messaggio · una volta".to_string(),
+            };
+        }
         let body = if !self.text.is_empty() {
             self.text.clone()
         } else {
             match self.kind {
                 Kind::Voice => format!("Vocale · {}", util::human_duration(self.duration)),
                 Kind::Video => "Video".to_string(),
+                Kind::Gif => "GIF".to_string(),
                 Kind::Image => "Foto".to_string(),
                 Kind::Sticker => "Sticker".to_string(),
                 Kind::Document => {
@@ -221,7 +247,7 @@ impl Message {
     pub fn media_ext(&self) -> &'static str {
         match self.kind {
             Kind::Image => "jpg",
-            Kind::Video => "mp4",
+            Kind::Gif | Kind::Video => "mp4",
             Kind::Voice => "ogg",
             Kind::Audio => "m4a",
             Kind::Document => "bin",
@@ -353,4 +379,48 @@ mod tests {
         };
         assert_eq!(video.media_ext(), "mp4");
     }
+}
+
+/// Nome noto per un contatto, con la sua provenienza.
+///
+/// WhatsApp riempie i nomi da tre sorgenti diverse: la rubrica sincronizzata
+/// dal telefono (`rank` 3), il push name scelto dal contatto (2) e il nome
+/// della conversazione nello storico (1). Teniamo il più autorevole: senza
+/// questa scala l'ultimo evento ricevuto sovrascriverebbe un nome salvato in
+/// rubrica con un push name.
+#[derive(Clone, Debug, Default)]
+pub struct Contact {
+    pub jid: String,
+    pub name: String,
+    pub rank: u8,
+    /// Numero di telefono, quando il JID è un LID e conosciamo la mappatura.
+    pub phone: String,
+    /// Foto profilo (anteprima) già scaricata.
+    pub avatar: Option<Vec<u8>>,
+}
+
+impl Contact {
+    pub fn empty(jid: &str) -> Self {
+        Self {
+            jid: jid.to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.name.trim().is_empty() && self.phone.is_empty() && self.avatar.is_none()
+    }
+}
+
+/// Nome da mostrare per un contatto, con fallback sul numero.
+pub fn contact_display(contact: Option<&Contact>, chat: &Chat) -> String {
+    if let Some(contact) = contact {
+        if !contact.name.trim().is_empty() {
+            return contact.name.trim().to_string();
+        }
+        if !contact.phone.is_empty() {
+            return util::phone_display(&contact.phone);
+        }
+    }
+    util::display_name(&chat.name, &chat.id)
 }

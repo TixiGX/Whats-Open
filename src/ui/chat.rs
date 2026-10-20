@@ -32,6 +32,7 @@ struct Bubble {
     reaction: Option<String>,
     sender_name: String,
     sender: String,
+    animated: bool,
 }
 
 impl Bubble {
@@ -55,6 +56,7 @@ impl Bubble {
             reaction: message.reaction.clone(),
             sender_name: message.sender_name.clone(),
             sender: message.sender.clone(),
+            animated: message.animated,
         }
     }
 }
@@ -119,6 +121,14 @@ impl App {
     }
 
     fn header_ui(&mut self, ui: &mut egui::Ui, chat: &crate::model::Chat) {
+        let title = self.title_for(chat);
+        let texture = self.avatars.get(&chat.id).cloned();
+        if texture.is_none() {
+            self.request_avatar(&chat.id);
+        }
+        let in_call = self.call.is_some();
+        let mut place_call = false;
+
         egui::Frame::new()
             .fill(Palette::PANEL)
             .inner_margin(egui::Margin::symmetric(10, 8))
@@ -135,11 +145,11 @@ impl App {
                         self.reply_label.clear();
                     }
 
-                    let (rect, _) =
-                        ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
-                    widgets::avatar(
-                        ui.painter(),
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
+                    widgets::avatar_tex(
+                        ui,
                         rect,
+                        texture.as_ref(),
                         &chat.name,
                         &chat.id,
                         chat.is_group,
@@ -149,14 +159,18 @@ impl App {
                     ui.add_space(2.0);
                     ui.vertical(|ui| {
                         ui.label(
-                            RichText::new(util::display_name(&chat.name, &chat.id))
+                            RichText::new(&title)
                                 .size(14.0)
                                 .color(Palette::TEXT),
                         );
                         let subtitle = if chat.typing {
                             "sta scrivendo…".to_string()
                         } else if chat.is_group {
-                            "Gruppo".to_string()
+                            if chat.online {
+                                "Gruppo · attivo".to_string()
+                            } else {
+                                "Gruppo".to_string()
+                            }
                         } else if chat.online {
                             "online".to_string()
                         } else if let Some(ts) = chat.last_seen {
@@ -174,9 +188,35 @@ impl App {
                                 }),
                         );
                     });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::icons::Icon::Phone
+                            .button(
+                                ui,
+                                30.0,
+                                if in_call { Palette::FAINT } else { Palette::MUTED },
+                            )
+                            .on_hover_text(if in_call {
+                                "Chiamata in corso"
+                            } else {
+                                "Chiamata vocale"
+                            })
+                            .clicked()
+                        {
+                            place_call = true;
+                        }
+                    });
                 });
             });
         ui.separator();
+
+        if place_call {
+            if chat.is_group {
+                self.note("Le chiamate di gruppo non sono supportate");
+            } else {
+                self.start_call();
+            }
+        }
     }
 
     fn messages_ui(&mut self, ui: &mut egui::Ui) {
@@ -383,7 +423,11 @@ impl App {
     ) {
         match bubble.kind {
             Kind::Text => {
-                if !bubble.text.is_empty() {
+                if bubble.view_once && !bubble.played {
+                    if self.view_once_tile(ui, index, Kind::Text, text_color, muted) {
+                        self.actions.push(Action::RevealOnce(index));
+                    }
+                } else if !bubble.text.is_empty() {
                     ui.label(
                         RichText::new(&bubble.text)
                             .size(14.0)
@@ -391,9 +435,27 @@ impl App {
                     );
                 }
             }
-            Kind::Image | Kind::Sticker => {
+            Kind::Sticker => {
+                if let Some(texture) = self.thumb_texture(index) {
+                    let size = fit_size(texture.size_vec2(), 150.0, 150.0);
+                    let image = ui.add(
+                        egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
+                            .corner_radius(4)
+                            .sense(Sense::click()),
+                    );
+                    if image.clicked() {
+                        self.actions.push(Action::OpenImage(index));
+                    }
+                    if bubble.animated {
+                        ui.label(RichText::new("sticker animato").size(9.5).color(faint));
+                    }
+                } else {
+                    self.missing_media_ui(ui, index, "Sticker", text_color, muted);
+                }
+            }
+            Kind::Image => {
                 if bubble.view_once && !bubble.played {
-                    if self.view_once_tile(ui, index, false, text_color, muted) {
+                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
                         self.actions.push(Action::OpenImage(index));
                     }
                 } else if let Some(texture) = self.thumb_texture(index) {
@@ -410,9 +472,9 @@ impl App {
                     self.missing_media_ui(ui, index, "Foto", text_color, muted);
                 }
             }
-            Kind::Video => {
+            Kind::Video | Kind::Gif => {
                 if bubble.view_once && !bubble.played {
-                    if self.view_once_tile(ui, index, true, text_color, muted) {
+                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
                         self.actions.push(Action::OpenVideo(index));
                     }
                 } else if let Some(texture) = self.thumb_texture(index) {
@@ -423,21 +485,45 @@ impl App {
                             .sense(Sense::click()),
                     );
                     let center = response.rect.center();
-                    ui.painter().circle_filled(
-                        center,
-                        21.0,
-                        Color32::from_black_alpha(140),
-                    );
-                    crate::icons::Icon::Play.paint(
-                        ui,
-                        egui::Rect::from_center_size(center, Vec2::splat(20.0)),
-                        Color32::WHITE,
-                    );
+                    if bubble.kind == Kind::Gif {
+                        let badge = egui::Rect::from_center_size(
+                            egui::Pos2::new(center.x, response.rect.bottom() - 16.0),
+                            Vec2::new(34.0, 18.0),
+                        );
+                        ui.painter().rect_filled(
+                            badge,
+                            egui::CornerRadius::same(4),
+                            Color32::from_black_alpha(150),
+                        );
+                        ui.painter().text(
+                            badge.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "GIF",
+                            egui::FontId::proportional(10.0),
+                            Color32::WHITE,
+                        );
+                        if response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                    } else {
+                        ui.painter().circle_filled(center, 21.0, Color32::from_black_alpha(140));
+                        crate::icons::Icon::Play.paint(
+                            ui,
+                            egui::Rect::from_center_size(center, Vec2::splat(20.0)),
+                            Color32::WHITE,
+                        );
+                    }
                     if response.clicked() {
                         self.actions.push(Action::OpenVideo(index));
                     }
                 } else {
                     self.missing_media_ui(ui, index, "Video", text_color, muted);
+                }
+            }
+            Kind::Voice | Kind::Audio if bubble.view_once && !bubble.played => {
+                if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                    self.actions.push(Action::PlayAudio(index));
+                    self.actions.push(Action::RevealOnce(index));
                 }
             }
             Kind::Voice => {
@@ -569,7 +655,7 @@ impl App {
         &self,
         ui: &mut egui::Ui,
         index: usize,
-        video: bool,
+        kind: Kind,
         text_color: Color32,
         muted: Color32,
     ) -> bool {
@@ -582,10 +668,10 @@ impl App {
         };
         ui.painter().rect_filled(rect, egui::CornerRadius::same(8), fill);
 
-        let icon = if video {
-            crate::icons::Icon::Video
-        } else {
-            crate::icons::Icon::Lock
+        let icon = match kind {
+            Kind::Video | Kind::Gif => crate::icons::Icon::Video,
+            Kind::Voice | Kind::Audio => crate::icons::Icon::Play,
+            _ => crate::icons::Icon::Lock,
         };
         let icon_rect = egui::Rect::from_center_size(
             egui::Pos2::new(rect.left() + 34.0, rect.center().y),
@@ -596,10 +682,11 @@ impl App {
         ui.painter().text(
             egui::Pos2::new(rect.left() + 58.0, rect.center().y - 8.0),
             egui::Align2::LEFT_CENTER,
-            if video {
-                "Video · una volta"
-            } else {
-                "Foto · una volta"
+            match kind {
+                Kind::Video | Kind::Gif => "Video · una volta",
+                Kind::Voice | Kind::Audio => "Vocale · una volta",
+                Kind::Text => "Messaggio · una volta",
+                _ => "Foto · una volta",
             },
             egui::FontId::proportional(12.5),
             text_color,
@@ -607,7 +694,11 @@ impl App {
         ui.painter().text(
             egui::Pos2::new(rect.left() + 58.0, rect.center().y + 10.0),
             egui::Align2::LEFT_CENTER,
-            "Tocca per aprire",
+            match kind {
+                Kind::Voice | Kind::Audio => "Tocca per ascoltare",
+                Kind::Text => "Tocca per leggere",
+                _ => "Tocca per aprire",
+            },
             egui::FontId::proportional(10.5),
             muted,
         );
@@ -831,25 +922,11 @@ impl App {
         self.ctx.request_repaint();
     }
 
-    pub fn notify_typing(&mut self) {
-        let now = Instant::now();
-        let should = self
-            .typing_sent
-            .map(|last| now.duration_since(last) > Duration::from_millis(3500))
-            .unwrap_or(true);
-        if should && !self.composer.trim().is_empty() {
-            if let Some(chat) = self.selected.clone() {
-                if let Some(engine) = self.engine.as_ref() {
-                    engine.send(Cmd::Typing {
-                        chat,
-                        composing: true,
-                    });
-                }
-                self.typing_sent = Some(now);
-                self.typing_last = now;
-            }
-        }
-    }
+    /// L'app non annuncia "sta scrivendo": il comando esiste ancora nel
+    /// motore ma non viene più inviato. Il metodo resta perché la casella di
+    /// composizione lo chiama a ogni modifica.
+    pub fn notify_typing(&mut self) {}
+
 
     pub fn send_text(&mut self) {
         let Some(chat) = self.selected.clone() else {
@@ -886,10 +963,6 @@ impl App {
                 local_id,
                 reply,
             });
-            engine.send(Cmd::Typing {
-                chat,
-                composing: false,
-            });
         }
     }
 
@@ -920,13 +993,13 @@ impl App {
             .and_then(|name| name.to_str())
             .unwrap_or("file")
             .to_string();
-        let lower = name.to_lowercase();
-
         let kind = if is_voice {
             Kind::Voice
+        } else if media::is_gif_path(&path) {
+            Kind::Gif
         } else if media::is_image_path(&path) {
             Kind::Image
-        } else if media::is_video_path(&path) || lower.ends_with(".gif") {
+        } else if media::is_video_path(&path) {
             Kind::Video
         } else if media::is_audio_path(&path) {
             Kind::Audio
@@ -936,7 +1009,7 @@ impl App {
 
         let preview = match kind {
             Kind::Image => media::make_thumbnail(&bytes, 480),
-            Kind::Video => media::video_thumbnail(&path),
+            Kind::Video | Kind::Gif => media::video_thumbnail(&path),
             _ => None,
         };
         let duration = match voice.as_ref() {

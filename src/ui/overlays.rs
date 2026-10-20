@@ -1,7 +1,7 @@
 //! Lettori media, impostazioni e finestre di servizio.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, Sense, Vec2};
 
@@ -91,6 +91,7 @@ impl App {
         let Some(message) = self.messages.get(index).cloned() else {
             return;
         };
+        let animated = message.kind == Kind::Gif;
         if message.view_once && message.played {
             self.note("Questo video è già stato aperto");
             return;
@@ -102,7 +103,8 @@ impl App {
                 return;
             }
             match VideoPlayer::open(&path) {
-                Ok(player) => {
+                Ok(mut player) => {
+                    player.set_looping(animated);
                     self.view_view_once = message.view_once;
                     self.video = Some(VideoState {
                         id: message.id.clone(),
@@ -223,7 +225,7 @@ impl App {
                 open: true,
                 view_once: message.view_once,
             },
-            Kind::Video => Pending::Video {
+            Kind::Video | Kind::Gif => Pending::Video {
                 chat: message.chat_id.clone(),
                 id: message.id.clone(),
                 view_once: message.view_once,
@@ -389,6 +391,7 @@ impl App {
     }
 
     pub fn overlays(&mut self, ctx: &egui::Context) {
+        self.call_ui(ctx);
         self.image_viewer(ctx);
         self.video_overlay(ctx);
         self.settings_ui(ctx);
@@ -396,6 +399,155 @@ impl App {
         self.pair_modal_ui(ctx);
         self.path_modal_ui(ctx);
         self.logout_confirm(ctx);
+    }
+
+    /// Pannello della chiamata: squillo in arrivo, composizione, chiamata attiva.
+    fn call_ui(&mut self, ctx: &egui::Context) {
+        use crate::engine::{CallPhase, Cmd};
+        let Some(call) = self.call.as_ref() else {
+            return;
+        };
+        let phase = call.phase;
+        let peer = call.peer.clone();
+        let muted = call.muted;
+        let since = call.since;
+        let video = call.video;
+        ctx.request_repaint_after(Duration::from_millis(500));
+
+        let title = if peer.is_empty() {
+            "Chiamata".to_string()
+        } else {
+            self.name_of(&peer)
+        };
+        let status = match phase {
+            CallPhase::Ringing => {
+                if video {
+                    "Videochiamata in arrivo…"
+                } else {
+                    "Chiamata in arrivo…"
+                }
+            }
+            CallPhase::Dialing => "Sto chiamando…",
+            CallPhase::Connecting => "Connessione…",
+            CallPhase::Active => "In chiamata",
+            CallPhase::Ended => "Terminata",
+        };
+        let elapsed = since.elapsed().as_secs();
+
+        let mut accept = false;
+        let mut reject = false;
+        let mut hangup = false;
+        let mut toggle_mute = false;
+
+        egui::Area::new(egui::Id::new("call-panel"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 14.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(Palette::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .inner_margin(egui::Margin::symmetric(16, 12))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            crate::icons::Icon::Phone.paint(
+                                ui,
+                                egui::Rect::from_min_size(ui.cursor().min, Vec2::splat(20.0)),
+                                Palette::TEXT,
+                            );
+                            ui.add_space(26.0);
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&title).size(13.0).color(Palette::TEXT));
+                                let line = if phase == CallPhase::Active {
+                                    format!(
+                                        "{status} · {}",
+                                        util::human_duration(elapsed as u32)
+                                    )
+                                } else {
+                                    status.to_string()
+                                };
+                                ui.label(RichText::new(line).size(11.0).color(Palette::MUTED));
+                            });
+                            ui.add_space(18.0);
+
+                            if phase == CallPhase::Ringing {
+                                if crate::icons::Icon::Phone
+                                    .button(ui, 32.0, Palette::WHITE)
+                                    .on_hover_text("Rispondi")
+                                    .clicked()
+                                {
+                                    accept = true;
+                                }
+                                if crate::icons::Icon::PhoneOff
+                                    .button(ui, 32.0, Palette::DANGER)
+                                    .on_hover_text("Rifiuta")
+                                    .clicked()
+                                {
+                                    reject = true;
+                                }
+                            } else {
+                                if phase == CallPhase::Active {
+                                    let icon = if muted {
+                                        crate::icons::Icon::MicOff
+                                    } else {
+                                        crate::icons::Icon::Mic
+                                    };
+                                    if icon
+                                        .button(
+                                            ui,
+                                            32.0,
+                                            if muted { Palette::FAINT } else { Palette::TEXT },
+                                        )
+                                        .on_hover_text(if muted {
+                                            "Riattiva microfono"
+                                        } else {
+                                            "Silenzia microfono"
+                                        })
+                                        .clicked()
+                                    {
+                                        toggle_mute = true;
+                                    }
+                                }
+                                if crate::icons::Icon::PhoneOff
+                                    .button(ui, 32.0, Palette::DANGER)
+                                    .on_hover_text("Chiudi")
+                                    .clicked()
+                                {
+                                    hangup = true;
+                                }
+                            }
+                        });
+                    });
+            });
+
+        if toggle_mute {
+            if let Some(call) = self.call.as_mut() {
+                call.muted = !muted;
+            }
+            if let Some(engine) = self.engine.as_ref() {
+                engine.send(Cmd::CallMute { muted: !muted });
+            }
+        }
+        if accept {
+            if let Some(engine) = self.engine.as_ref() {
+                engine.send(Cmd::CallAccept);
+            }
+            if let Some(call) = self.call.as_mut() {
+                call.phase = CallPhase::Connecting;
+            }
+        }
+        if reject {
+            if let Some(engine) = self.engine.as_ref() {
+                engine.send(Cmd::CallReject);
+            }
+            self.call = None;
+        }
+        if hangup {
+            if let Some(engine) = self.engine.as_ref() {
+                engine.send(Cmd::CallHangup);
+            }
+            self.call = None;
+        }
     }
 
     fn close_viewer(&mut self) {
@@ -519,7 +671,7 @@ impl App {
         let duration = video.player.duration;
         let size = Vec2::new(820.0, 520.0);
 
-        egui::Window::new("Video")
+        egui::Window::new(if video.player.looping { "GIF" } else { "Video" })
             .id(egui::Id::new("video-player"))
             .open(&mut open)
             .collapsible(false)
@@ -573,6 +725,20 @@ impl App {
                     }
 
                     let position = video.player.position();
+                    if video.player.looping {
+                        ui.label(
+                            RichText::new("in riproduzione")
+                                .size(11.0)
+                                .color(Palette::MUTED),
+                        );
+                        if crate::icons::Icon::Close
+                            .button(ui, 28.0, Palette::MUTED)
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                        return;
+                    }
                     let bar_width = (size.x - 150.0).max(120.0);
                     let (rect, response) =
                         ui.allocate_exact_size(Vec2::new(bar_width, 16.0), Sense::click());

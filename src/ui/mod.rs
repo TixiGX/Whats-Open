@@ -22,6 +22,7 @@ use crate::model::{Chat, Kind, Message, Status};
 use crate::play::audio::AudioPlayer;
 use crate::play::record::Recorder;
 use crate::play::video::VideoPlayer;
+use crate::model::Contact;
 use crate::store::Store;
 use crate::theme::Palette;
 use crate::util::{self, Paths};
@@ -56,6 +57,8 @@ pub enum Action {
     ClearReaction(usize),
     CopyText(usize),
     Revoke(usize),
+    /// Svela un contenuto "una volta sola" (testo o vocale).
+    RevealOnce(usize),
     Seleziona(String),
 }
 
@@ -73,6 +76,15 @@ pub struct VideoState {
     pub id: String,
     pub player: VideoPlayer,
     pub texture: Option<TextureHandle>,
+}
+
+/// Chiamata in corso, come la vede l'interfaccia.
+pub struct CallUi {
+    pub peer: String,
+    pub phase: crate::engine::CallPhase,
+    pub video: bool,
+    pub since: Instant,
+    pub muted: bool,
 }
 
 pub struct App {
@@ -105,6 +117,18 @@ pub struct App {
     pub typing_last: Instant,
     pub typing_until: HashMap<String, Instant>,
 
+    /// Nomi noti per JID (rubrica, push name, storico).
+    pub contacts: HashMap<String, Contact>,
+    /// Mappatura LID → numero: le chat nate con indirizzamento LID vengono
+    /// unificate sulla chat del numero, così i nomi e le foto tornano.
+    pub aliases: HashMap<String, String>,
+    /// Foto profilo già decodificate, per JID.
+    pub avatars: HashMap<String, TextureHandle>,
+    /// JID per cui abbiamo già chiesto la foto (per non ripetere la richiesta).
+    pub avatar_asked: std::collections::HashSet<String>,
+    pub avatar_budget: (Instant, u32),
+    /// Chiamata in corso (squillo, composizione, attiva).
+    pub call: Option<CallUi>,
     pub gfx: Textures,
     pub pending: HashMap<u64, Pending>,
     pub next_req: u64,
@@ -154,6 +178,12 @@ impl App {
         crate::theme::apply(&cc.egui_ctx, config.system_fonts);
         let store = Store::open(&paths.db)?;
         let chats = store.load_chats().unwrap_or_default();
+        let contacts: HashMap<String, Contact> = store
+            .load_contacts()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|contact| (contact.jid.clone(), contact))
+            .collect();
 
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
@@ -181,6 +211,12 @@ impl App {
             typing_sent: None,
             typing_last: Instant::now(),
             typing_until: HashMap::new(),
+            contacts,
+            aliases: HashMap::new(),
+            avatars: HashMap::new(),
+            avatar_asked: std::collections::HashSet::new(),
+            avatar_budget: (Instant::now(), 0),
+            call: None,
             gfx: Textures::default(),
             pending: HashMap::new(),
             next_req: 0,
@@ -250,6 +286,313 @@ impl App {
             text: text.into(),
             at: Instant::now(),
         });
+    }
+
+    // ── contatti, foto profilo, chiamate ─────────────────────────────────
+
+    /// JID canonico: se conosciamo la mappatura LID → numero, usiamo il
+    /// numero, così chat, nomi e foto non si sdoppiano.
+    pub fn canonical(&self, jid: &str) -> String {
+        let mut current = jid.to_string();
+        for _ in 0..4 {
+            match self.aliases.get(&current) {
+                Some(next) if next != &current => current = next.clone(),
+                _ => break,
+            }
+        }
+        current
+    }
+
+    pub fn contact_for(&self, jid: &str) -> Option<&Contact> {
+        self.contacts
+            .get(jid)
+            .or_else(|| self.contacts.get(&self.canonical(jid)))
+    }
+
+    /// Nome da mostrare in lista e in intestazione.
+    pub fn title_for(&self, chat: &Chat) -> String {
+        crate::model::contact_display(self.contact_for(&chat.id), chat)
+    }
+
+    /// Nome da mostrare per un JID che non è (ancora) una chat.
+    pub fn name_of(&self, jid: &str) -> String {
+        if let Some(contact) = self.contact_for(jid) {
+            if !contact.name.trim().is_empty() {
+                return contact.name.clone();
+            }
+            if !contact.phone.is_empty() {
+                return crate::util::phone_display(&contact.phone);
+            }
+        }
+        crate::util::display_name("", jid)
+    }
+
+    fn apply_contact_name(&mut self, jid: &str, name: &str, rank: u8) {
+        let name = name.trim();
+        if jid.is_empty() || name.is_empty() {
+            return;
+        }
+        let jid = self.canonical(jid);
+        // Alcune sorgenti (storico, notifiche) mandano il numero al posto
+        // del nome: in quel caso è un recapito, non un nome da mostrare.
+        if util::looks_like_phone(name) {
+            let phone = name.trim_start_matches('+').to_string();
+            self.store.set_contact_phone(&jid, &phone).ok();
+            let entry = self
+                .contacts
+                .entry(jid.clone())
+                .or_insert_with(|| Contact::empty(&jid));
+            if entry.phone.is_empty() {
+                entry.phone = phone;
+            }
+            return;
+        }
+        let name = name.to_string();
+        {
+            let entry = self
+                .contacts
+                .entry(jid.clone())
+                .or_insert_with(|| Contact::empty(&jid));
+            if rank >= entry.rank {
+                entry.name = name.clone();
+                entry.rank = rank;
+            }
+        }
+        self.store.set_contact_name(&jid, &name, rank).ok();
+        let twin = if jid.ends_with("@lid") {
+            self.aliases.get(&jid).cloned()
+        } else {
+            self.aliases
+                .iter()
+                .find_map(|(lid, pn)| (pn == &jid).then(|| lid.clone()))
+        };
+        if let Some(twin) = twin {
+            if let Some(entry) = self.contacts.get_mut(&twin) {
+                if rank >= entry.rank {
+                    entry.name = name.clone();
+                    entry.rank = rank;
+                }
+            }
+            self.store.set_contact_name(&twin, &name, rank).ok();
+        }
+    }
+
+    /// Unisce una chat nata con indirizzamento LID alla chat del numero.
+    fn adopt_alias(&mut self, lid: &str, pn: &str) {
+        if lid.is_empty() || pn.is_empty() || lid == pn {
+            return;
+        }
+        if self.aliases.get(lid).map(String::as_str) == Some(pn) {
+            return;
+        }
+        self.aliases.insert(lid.to_string(), pn.to_string());
+
+        let phone = crate::util::jid_user(pn);
+        let lid_contact = self.contacts.get(lid).cloned();
+        let existing = self.contacts.get(pn).cloned();
+        let mut merged = existing.unwrap_or_else(|| Contact::empty(pn));
+        if let Some(other) = lid_contact.as_ref() {
+            if merged.name.trim().is_empty() && !other.name.trim().is_empty() {
+                merged.name = other.name.clone();
+                merged.rank = other.rank;
+            }
+            if merged.avatar.is_none() {
+                merged.avatar = other.avatar.clone();
+            }
+        }
+        merged.phone = phone;
+        self.store.save_contact(&merged, 0).ok();
+        self.contacts.insert(pn.to_string(), merged.clone());
+        self.contacts.insert(lid.to_string(), merged.clone());
+        if let Some(bytes) = merged.avatar.as_ref() {
+            self.ensure_avatar_texture(pn, bytes);
+            self.ensure_avatar_texture(lid, bytes);
+        }
+
+        self.store.rename_jid(lid, pn).ok();
+        if let Some(index) = self.index.get(lid).copied() {
+            let old = self.chats.remove(index);
+            self.sort_chats();
+            if self.index.contains_key(pn) {
+                self.store.delete_chat(lid).ok();
+                if let Some(index) = self.index.get(pn).copied() {
+                    self.chats[index].unread += old.unread;
+                }
+            } else {
+                let mut chat = old;
+                chat.id = pn.to_string();
+                self.store.upsert_chat(&chat).ok();
+                self.chats.push(chat);
+                self.sort_chats();
+            }
+            if self.selected.as_deref() == Some(lid) {
+                self.selected = Some(pn.to_string());
+                self.messages = self.store.load_messages(pn, 300).unwrap_or_default();
+            }
+        }
+    }
+
+    fn ensure_avatar_texture(&mut self, jid: &str, bytes: &[u8]) {
+        if self.avatars.contains_key(jid) {
+            return;
+        }
+        let Some((image, _, _)) = gfx::image_from_bytes(bytes) else {
+            return;
+        };
+        let texture = self.ctx.load_texture(
+            format!("avatar:{jid}"),
+            image,
+            egui::TextureOptions::LINEAR,
+        );
+        self.avatars.insert(jid.to_string(), texture);
+    }
+
+    fn apply_avatar(&mut self, jid: &str, bytes: Option<Vec<u8>>) {
+        let jid = self.canonical(jid);
+        if jid.is_empty() {
+            return;
+        }
+        self.store
+            .set_contact_avatar(&jid, bytes.as_deref(), crate::util::now_ts())
+            .ok();
+        {
+            let entry = self
+                .contacts
+                .entry(jid.clone())
+                .or_insert_with(|| Contact::empty(&jid));
+            entry.avatar = bytes.clone();
+        }
+        self.avatar_asked.remove(&jid);
+        match bytes.as_ref() {
+            Some(bytes) => self.ensure_avatar_texture(&jid, bytes),
+            None => {
+                self.avatars.remove(&jid);
+            }
+        }
+        let twin = if jid.ends_with("@lid") {
+            self.aliases.get(&jid).cloned()
+        } else {
+            self.aliases
+                .iter()
+                .find_map(|(lid, pn)| (pn == &jid).then(|| lid.clone()))
+        };
+        if let Some(twin) = twin {
+            if let Some(entry) = self.contacts.get_mut(&twin) {
+                entry.avatar = bytes.clone();
+            }
+            match bytes.as_ref() {
+                Some(bytes) => self.ensure_avatar_texture(&twin, bytes),
+                None => {
+                    self.avatars.remove(&twin);
+                }
+            }
+        }
+    }
+
+    /// Chiede la foto profilo, con un piccolo limite di richieste al secondo.
+    pub fn request_avatar(&mut self, jid: &str) {
+        let jid = self.canonical(jid);
+        if jid.is_empty() || self.avatars.contains_key(&jid) {
+            return;
+        }
+        if let Some(contact) = self.contacts.get(&jid) {
+            if contact.avatar.is_some() {
+                return;
+            }
+        }
+        if self.avatar_asked.contains(&jid) {
+            return;
+        }
+        let (stamp, count) = self.avatar_budget;
+        let count = if stamp.elapsed() > Duration::from_secs(1) {
+            0
+        } else {
+            count
+        };
+        if count >= 3 {
+            return;
+        }
+        self.avatar_budget = (Instant::now(), count + 1);
+        self.avatar_asked.insert(jid.clone());
+        let Some(engine) = self.engine.as_ref() else {
+            return;
+        };
+        engine.send(Cmd::Avatar { jid });
+    }
+
+    fn apply_call(&mut self, phase: crate::engine::CallPhase, peer: String, video: bool) {
+        use crate::engine::CallPhase;
+        if phase == CallPhase::Ended {
+            if self.call.is_some() {
+                self.note("Chiamata terminata");
+            }
+            self.call = None;
+            return;
+        }
+        let previous = self.call.as_ref();
+        let peer = if peer.is_empty() {
+            previous.map(|call| call.peer.clone()).unwrap_or_default()
+        } else {
+            peer
+        };
+        let muted = previous.map(|call| call.muted).unwrap_or(false);
+        let since = match (previous, phase) {
+            (Some(call), phase) if phase != CallPhase::Active => call.since,
+            _ => Instant::now(),
+        };
+        self.call = Some(CallUi {
+            peer,
+            phase,
+            video,
+            since,
+            muted,
+        });
+    }
+
+    fn apply_missed_call(&mut self, peer: String, video: bool) {
+        let label = if video {
+            "Videochiamata persa"
+        } else {
+            "Chiamata persa"
+        };
+        let chat_id = self.canonical(&peer);
+        if chat_id.is_empty() {
+            return;
+        }
+        let message = Message {
+            id: format!("call-{}", crate::util::timestamp_ms()),
+            chat_id,
+            ts: crate::util::now_ts(),
+            kind: Kind::System,
+            text: label.to_string(),
+            ..Default::default()
+        };
+        self.ingest(message);
+        let who = self.name_of(&peer);
+        self.note(format!("{label} · {who}"));
+    }
+
+    pub fn start_call(&mut self) {
+        let Some(chat) = self.selected.clone() else {
+            return;
+        };
+        if self.call.is_some() {
+            self.note("Sei già in una chiamata");
+            return;
+        }
+        let Some(engine) = self.engine.as_ref() else {
+            return;
+        };
+        engine.send(Cmd::CallStart { chat: chat.clone() });
+        let name = self.name_of(&chat);
+        self.call = Some(CallUi {
+            peer: chat,
+            phase: crate::engine::CallPhase::Dialing,
+            video: false,
+            since: Instant::now(),
+            muted: false,
+        });
+        self.note(format!("Chiamata a {name}…"));
     }
 
     pub fn sort_chats(&mut self) {
@@ -355,6 +698,9 @@ impl App {
                     self.chats[index].name = name.clone();
                     self.store.set_chat_name(&chat, &name).ok();
                 }
+                if !crate::util::jid_is_group(&chat) {
+                    self.apply_contact_name(&chat, &name, 3);
+                }
             }
             Event::Status { chat, ids, status } => {
                 for message in self.messages.iter_mut() {
@@ -391,6 +737,24 @@ impl App {
                     }
                 }
             }
+            Event::Contact { jid, name, rank } => {
+                self.apply_contact_name(&jid, &name, rank);
+            }
+            Event::Alias { lid, pn } => {
+                self.adopt_alias(&lid, &pn);
+            }
+            Event::Avatar { jid, bytes } => {
+                self.apply_avatar(&jid, bytes);
+            }
+            Event::Call { phase, peer, video } => {
+                self.apply_call(phase, peer, video);
+            }
+            Event::CallMissed { peer, video } => {
+                self.apply_missed_call(peer, video);
+            }
+            Event::Notice(text) => {
+                self.note(text);
+            }
             Event::Sent {
                 chat,
                 local_id,
@@ -407,6 +771,7 @@ impl App {
                         self.messages[index].id = server_id.clone();
                         self.messages[index].ts = ts;
                         self.messages[index].status = Status::Sent;
+                        self.scroll_bottom = true;
                     }
                     self.gfx
                         .rename(&format!("local:{local_id}"), &format!("local:{server_id}"));
@@ -492,6 +857,11 @@ impl App {
         self.chats.clear();
         self.index.clear();
         self.messages.clear();
+        self.contacts.clear();
+        self.aliases.clear();
+        self.avatars.clear();
+        self.avatar_asked.clear();
+        self.call = None;
         self.selected = None;
         self.gfx.clear();
         self.pending.clear();
@@ -504,8 +874,28 @@ impl App {
         self.begin_engine(None);
     }
 
-    fn ingest(&mut self, message: Message) {
+    fn ingest(&mut self, mut message: Message) {
+        message.chat_id = self.canonical(&message.chat_id);
         let chat_id = message.chat_id.clone();
+        // Eco di un messaggio inviato da questa app: invece di aggiungere una
+        // seconda bolla, adotta l'id del server su quella locale (che è già
+        // a schermo). Vale anche se il server risponde prima di `Event::Sent`.
+        if message.from_me && !message.text.is_empty() && message.kind == Kind::Text {
+            if let Some(local) = self.store.find_pending(&chat_id, &message.text, message.ts) {
+                self.store
+                    .rename_message_id(&chat_id, &local, &message.id, message.ts)
+                    .ok();
+                if let Some(index) = self.messages.iter().position(|item| item.id == local) {
+                    self.messages[index].id = message.id.clone();
+                    self.messages[index].ts = message.ts;
+                    self.messages[index].status = Status::Sent;
+                }
+                self.gfx.rename(
+                    &format!("local:{local}"),
+                    &format!("local:{}", message.id),
+                );
+            }
+        }
         if util::jid_is_status(&chat_id) || util::jid_is_newsletter(&chat_id) || chat_id.is_empty() {
             return;
         }
@@ -713,6 +1103,10 @@ impl App {
                     video_frame = Some((video.id.clone(), width, height));
                 }
             }
+            if video.player.looping && video.player.at_end() {
+                video.player.seek(0.0);
+                video.player.play();
+            }
             if video.player.playing || video.player.position() + 0.5 < video.player.duration {
                 ctx.request_repaint_after(Duration::from_millis(50));
             }
@@ -760,6 +1154,31 @@ impl App {
                 Action::PlayAudio(index) => self.toggle_audio(index),
                 Action::OpenDoc(index) => self.open_document(index),
                 Action::Download(index) => self.download_message(index),
+                Action::RevealOnce(index) => {
+                    let mut played: Option<(String, String, bool)> = None;
+                    if let Some(message) = self.messages.get_mut(index) {
+                        if message.view_once && !message.played {
+                            message.played = true;
+                            played = Some((
+                                message.chat_id.clone(),
+                                message.id.clone(),
+                                message.kind != Kind::Text,
+                            ));
+                        }
+                    }
+                    if let Some((chat, id, media)) = played {
+                        self.store.set_played(&chat, &id).ok();
+                        if media {
+                            if let Some(engine) = self.engine.as_ref() {
+                                engine.send(Cmd::Played {
+                                    chat,
+                                    sender: None,
+                                    ids: vec![id],
+                                });
+                            }
+                        }
+                    }
+                }
                 Action::Reply(index) => {
                     if let Some(message) = self.messages.get(index).cloned() {
                         self.reply = Some(ReplyTarget {
@@ -969,6 +1388,7 @@ pub fn color_for_status(status: Status) -> Color32 {
 pub fn kind_glyph(kind: Kind) -> &'static str {
     match kind {
         Kind::Image => "Foto",
+        Kind::Gif => "GIF",
         Kind::Video => "Video",
         Kind::Voice => "Vocale",
         Kind::Audio => "Audio",
