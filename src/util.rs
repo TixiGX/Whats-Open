@@ -266,6 +266,27 @@ pub fn open_external_checked(path: &Path) -> bool {
     crate::platform::open_external(path)
 }
 
+/// Id di messaggio nel formato di WhatsApp: 16 caratteri esadecimali
+/// maiuscoli. Lo scegliamo noi così l'eco del server porta lo stesso id della
+/// bolla già a schermo (niente duplicati, niente rinominazioni).
+pub fn new_message_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut value = nanos
+        ^ ((std::process::id() as u64) << 40)
+        ^ COUNTER.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    value ^= value >> 33;
+    format!("{value:016X}")
+}
+
 pub fn timestamp_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -335,6 +356,23 @@ fn _assert_local_tz() -> Option<chrono::DateTime<Local>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gli_id_dei_messaggi_sono_esadecimali_e_unici() {
+        let first = super::new_message_id();
+        let second = super::new_message_id();
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn un_numero_non_e_un_nome() {
+        assert!(super::looks_like_phone("+39 333 123 4567"));
+        assert!(super::looks_like_phone("393331234567"));
+        assert!(!super::looks_like_phone("Mamma"));
+        assert!(!super::looks_like_phone(""));
+    }
+
     use super::*;
 
     #[test]

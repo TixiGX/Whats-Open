@@ -426,6 +426,12 @@ impl App {
                     if self.view_once_tile(ui, index, Kind::Text, text_color, muted) {
                         self.actions.push(Action::RevealOnce(index));
                     }
+                } else if bubble.view_once && bubble.played && bubble.text.is_empty() {
+                    ui.label(
+                        RichText::new("Messaggio · una volta · già aperto")
+                            .size(12.5)
+                            .color(muted),
+                    );
                 } else if !bubble.text.is_empty() {
                     ui.label(
                         RichText::new(&bubble.text)
@@ -935,7 +941,7 @@ impl App {
         if text.is_empty() {
             return;
         }
-        let local_id = format!("local-{}", crate::util::timestamp_ms());
+        let local_id = crate::util::new_message_id();
         let reply = self.reply.take();
         let message = Message {
             id: local_id.clone(),
@@ -1022,7 +1028,7 @@ impl App {
             }
         };
 
-        let local_id = format!("local-{}", crate::util::timestamp_ms());
+        let local_id = crate::util::new_message_id();
         let reply = self.reply.take();
         let message = Message {
             id: local_id.clone(),

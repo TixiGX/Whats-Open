@@ -398,6 +398,16 @@ impl Store {
     }
 
     pub fn rename_message_id(&self, chat_id: &str, old_id: &str, new_id: &str, ts: i64) -> Result<()> {
+        if old_id == new_id {
+            // L'id l'abbiamo scelto noi: la riga è già quella giusta, va solo
+            // confermata (lo stato passa a "inviato").
+            self.conn.execute(
+                "UPDATE messages SET ts = ?3, status = 'sent'
+                  WHERE chat_id = ?1 AND id = ?2",
+                params![chat_id, old_id, ts],
+            )?;
+            return Ok(());
+        }
         // Se l'eco del server è già arrivata esiste una riga con `new_id`:
         // quella è la verità (payload, stato, miniatura), quindi la copia
         // locale va rimossa invece di restare lì come duplicato.
@@ -436,6 +446,17 @@ impl Store {
             .optional()
             .ok()
             .flatten()
+    }
+
+    /// Contenuto "una volta sola" consumato: non deve più essere leggibile
+    /// dopo un riavvio.
+    pub fn consume_once(&self, chat_id: &str, message_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET played = 1, body = '', payload = NULL, thumb = NULL
+              WHERE chat_id = ?1 AND id = ?2",
+            params![chat_id, message_id],
+        )?;
+        Ok(())
     }
 
     pub fn set_played(&self, chat_id: &str, message_id: &str) -> Result<()> {
@@ -746,6 +767,35 @@ mod tests {
         let removed = store.delete_expired(30).unwrap();
         assert_eq!(removed, vec!["v1".to_string()]);
         assert!(store.load_messages("e@s.whatsapp.net", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stesso_id_non_cancella_il_messaggio() {
+        let store = temp_store("stesso-id");
+        store
+            .insert_message(&message("g@s.whatsapp.net", "ABC123", 11, "in uscita"))
+            .unwrap();
+        // L'id scelto in locale è già quello del server: la conferma non deve
+        // toccare la riga (prima la cancellava come doppione).
+        store
+            .rename_message_id("g@s.whatsapp.net", "ABC123", "ABC123", 12)
+            .unwrap();
+        let loaded = store.load_messages("g@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "ABC123");
+        assert_eq!(loaded[0].status, Status::Sent);
+    }
+
+    #[test]
+    fn contenuto_una_volta_non_resta_leggibile() {
+        let store = temp_store("una-volta");
+        let mut msg = message("h@s.whatsapp.net", "once1", 10, "segreto");
+        msg.view_once = true;
+        store.insert_message(&msg).unwrap();
+        store.consume_once("h@s.whatsapp.net", "once1").unwrap();
+        let loaded = store.load_messages("h@s.whatsapp.net", 10).unwrap();
+        assert!(loaded[0].played);
+        assert!(loaded[0].text.is_empty());
     }
 
     #[test]

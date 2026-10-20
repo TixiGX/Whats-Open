@@ -1155,27 +1155,24 @@ impl App {
                 Action::OpenDoc(index) => self.open_document(index),
                 Action::Download(index) => self.download_message(index),
                 Action::RevealOnce(index) => {
-                    let mut played: Option<(String, String, bool)> = None;
+                    let mut played: Option<(String, String)> = None;
                     if let Some(message) = self.messages.get_mut(index) {
                         if message.view_once && !message.played {
                             message.played = true;
-                            played = Some((
-                                message.chat_id.clone(),
-                                message.id.clone(),
-                                message.kind != Kind::Text,
-                            ));
+                            played = Some((message.chat_id.clone(), message.id.clone()));
                         }
                     }
-                    if let Some((chat, id, media)) = played {
-                        self.store.set_played(&chat, &id).ok();
-                        if media {
-                            if let Some(engine) = self.engine.as_ref() {
-                                engine.send(Cmd::Played {
-                                    chat,
-                                    sender: None,
-                                    ids: vec![id],
-                                });
-                            }
+                    if let Some((chat, id)) = played {
+                        // Il media già scaricato resta in cache per questa
+                        // sessione, ma il contenuto non è più riapribile.
+                        self.store.consume_once(&chat, &id).ok();
+                        // Il mittente deve sapere che l'abbiamo visto.
+                        if let Some(engine) = self.engine.as_ref() {
+                            engine.send(Cmd::Played {
+                                chat,
+                                sender: None,
+                                ids: vec![id],
+                            });
                         }
                     }
                 }
