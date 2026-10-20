@@ -1,8 +1,7 @@
 name: diag
 
-# Diagnostica temporanea: verifica che le immagini dei container usate dalla
-# CI accettino ancora l'installazione dei pacchetti. Viene cancellata appena
-# i job glibc e musl funzionano.
+# Diagnostica temporanea: verifica le immagini dei container usate dalla CI.
+# Viene cancellata appena i job glibc e musl funzionano.
 
 on:
   push:
@@ -13,51 +12,24 @@ permissions:
   contents: write
 
 jobs:
-  debian:
+  ubuntu:
     name: strumenti ubuntu 20.04
     runs-on: ubuntu-22.04
     container: ubuntu:20.04
     steps:
       - name: Installa
+        shell: bash
         run: |
-          set -o pipefail
           set -x
           export DEBIAN_FRONTEND=noninteractive
-          cat /etc/os-release
-          cat /etc/resolv.conf || true
-          getent hosts archive.ubuntu.com || true
-          { apt-get update
-            apt-get install -y --no-install-recommends \
-              curl ca-certificates build-essential pkg-config git jq \
-              libasound2-dev libxkbcommon-dev libwayland-dev \
-              libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-              libgl1-mesa-dev libegl1-mesa-dev libssl-dev
-            ldd --version | head -1
-          } 2>&1 | tee tools.log
-
-      - name: Diagnosi
-        if: failure()
-        run: |
-          echo "::error::ultime righe del log di installazione"
-          tail -n 15 tools.log 2>/dev/null | while IFS= read -r line; do
-            line=$(printf '%s' "$line" | tr -d '\r')
-            echo "::error::$line"
-          done
-
-      - name: Pubblica
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-        run: |
-          tail -c 30000 tools.log > tail.log 2>/dev/null || true
-          jq -Rs '{body: .}' tail.log > body.json
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
-            -d @body.json > /dev/null || true
+          apt-get update 2>&1 | tail -5
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates build-essential pkg-config git \
+            libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libssl-dev 2>&1 | tail -15
+          ldd --version | head -1
+          pkg-config --modversion alsa
 
   alpine:
     name: strumenti alpine
@@ -66,37 +38,14 @@ jobs:
     steps:
       - name: Installa
         run: |
-          set -o pipefail
           set -x
-          cat /etc/os-release
-          cat /etc/resolv.conf || true
-          getent hosts dl-cdn.alpinelinux.org || true
-          { apk add --no-cache \
-              build-base musl-dev pkgconf git curl ca-certificates tar gzip jq \
-              alsa-lib-dev alsa-lib-static linux-headers
-            ldd --version | head -1
-          } 2>&1 | tee tools.log
-
-      - name: Diagnosi
-        if: failure()
-        run: |
-          echo "::error::ultime righe del log di installazione"
-          tail -n 15 tools.log 2>/dev/null | while IFS= read -r line; do
-            line=$(printf '%s' "$line" | tr -d '\r')
-            echo "::error::$line"
-          done
-
-      - name: Pubblica
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-        run: |
-          tail -c 30000 tools.log > tail.log 2>/dev/null || true
-          jq -Rs '{body: .}' tail.log > body.json
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
-            -d @body.json > /dev/null || true
+          apk add --no-cache build-base musl-dev pkgconf git curl ca-certificates tar gzip alsa-lib-dev linux-headers
+          echo "=== libasound"
+          ls -l /usr/lib/libasound* || true
+          echo "=== contenuto alsa-lib-dev"
+          apk info -L alsa-lib-dev | grep -i asound || true
+          echo "=== pacchetti alsa"
+          apk search alsa | head -20
+          echo "=== pkgconfig"
+          pkg-config --libs alsa
+          pkg-config --static --libs alsa
