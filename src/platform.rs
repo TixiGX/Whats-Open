@@ -2,6 +2,8 @@
 //! con il programma di sistema, font di riserva, istanza singola, diagnosi.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Apre un file con il player/visualizzatore preferito dal desktop.
 ///
@@ -46,12 +48,35 @@ pub fn command_exists(name: &str) -> bool {
         return false;
     };
     for dir in std::env::split_paths(&paths) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
+        if is_executable(&dir.join(name)) {
             return true;
         }
     }
     false
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.is_file() && meta.permissions().mode() & 0o111 != 0,
+        Err(_) => false,
+    }
+}
+
+/// Il portale XDG non sta nel PATH: vive in `/usr/libexec` o simili.
+fn portal_present() -> bool {
+    if command_exists("xdg-desktop-portal") {
+        return true;
+    }
+    [
+        "/usr/libexec/xdg-desktop-portal",
+        "/usr/lib/xdg-desktop-portal",
+        "/usr/libexec/xdg-desktop-portal-gtk",
+        "/usr/libexec/xdg-desktop-portal-kde",
+        "/usr/lib/xdg-desktop-portal-gtk",
+    ]
+    .iter()
+    .any(|path| is_executable(Path::new(path)))
 }
 
 /// Nome della distribuzione e versione, da `/etc/os-release`.
@@ -104,18 +129,15 @@ pub fn report(paths: &crate::util::Paths) -> String {
         glibc_version().unwrap_or_else(|| "musl/statico".to_string())
     ));
 
-    for (label, name) in [
-        ("ffmpeg", "ffmpeg"),
-        ("ffprobe", "ffprobe"),
-        ("xdg-open", "xdg-open"),
-        ("player", "ffplay"),
-        ("portal", "xdg-desktop-portal"),
+    for (label, found) in [
+        ("ffmpeg", command_exists("ffmpeg")),
+        ("ffprobe", command_exists("ffprobe")),
+        ("xdg-open", command_exists("xdg-open")),
+        ("ffplay", command_exists("ffplay")),
+        ("notify-send", command_exists("notify-send")),
+        ("portale", portal_present()),
     ] {
-        out.push_str(&format!(
-            "{:<14}: {}\n",
-            label,
-            if command_exists(name) { "sì" } else { "no" }
-        ));
+        out.push_str(&format!("{:<14}: {}\n", label, if found { "sì" } else { "no" }));
     }
 
     if let Some(device) = default_audio_device() {
@@ -180,12 +202,14 @@ fn glibc_version() -> Option<String> {
     let mut command = std::process::Command::new("ldd");
     command.arg("--version");
     let output = command.output().ok()?;
+    // Con musl `ldd --version` risponde "musl libc (x86_64)": non è glibc.
     let text = String::from_utf8_lossy(&output.stdout);
-    let first = text.lines().next()?.trim().to_string();
-    if first.is_empty() {
-        None
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let first = lines.next()?;
+    if first.contains("GLIBC") || first.contains("glibc") || first.contains("GNU libc") {
+        Some(first.to_string())
     } else {
-        Some(first)
+        None
     }
 }
 
@@ -328,13 +352,22 @@ fn font_magic_ok(bytes: &[u8]) -> bool {
 /// Il socket resta aperto per tutta la vita del processo: se il bind riesce
 /// siamo i soli, altrimenti c'è già un Whats-Open in esecuzione.
 pub struct InstanceLock {
-    _listener: std::os::unix::net::UnixListener,
     path: PathBuf,
+    /// Diventa `true` quando una seconda istanza chiede di mostrare la finestra.
+    focus: Arc<AtomicBool>,
 }
 
 impl Drop for InstanceLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+impl InstanceLock {
+    /// Bandierina da controllare a ogni fotogramma: se è vera, la finestra
+    /// esistente si porta in primo piano.
+    pub fn focus_flag(&self) -> Arc<AtomicBool> {
+        self.focus.clone()
     }
 }
 
@@ -348,10 +381,14 @@ pub fn single_instance(paths: &crate::util::Paths) -> Result<InstanceLock, Strin
     // un socket rimasto da un crash precedente non deve bloccare l'avvio
     if path.exists() {
         match std::os::unix::net::UnixStream::connect(&path) {
-            Ok(_) => {
+            Ok(mut stream) => {
+                // chiedi alla finestra già aperta di venire davanti
+                use std::io::Write as _;
+                let _ = stream.write_all(b"focus\n");
                 return Err(
-                    "Whats-Open è già in esecuzione: usa la finestra aperta.".to_string(),
-                )
+                    "Whats-Open è già in esecuzione: porto la sua finestra in primo piano."
+                        .to_string(),
+                );
             }
             Err(_) => {
                 let _ = std::fs::remove_file(&path);
@@ -359,10 +396,20 @@ pub fn single_instance(paths: &crate::util::Paths) -> Result<InstanceLock, Strin
         }
     }
 
-    std::os::unix::net::UnixListener::bind(&path)
-        .map(|listener| InstanceLock {
-            _listener: listener,
-            path,
-        })
-        .map_err(|error| format!("blocco istanza: {error}"))
+    let listener = std::os::unix::net::UnixListener::bind(&path)
+        .map_err(|error| format!("blocco istanza: {error}"))?;
+    let focus = Arc::new(AtomicBool::new(false));
+    let flag = focus.clone();
+    // Il thread vive quanto il processo: tiene il socket e raccoglie le richieste.
+    let _ = std::thread::Builder::new()
+        .name("whats-open-ipc".into())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                if stream.is_ok() {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+
+    Ok(InstanceLock { path, focus })
 }

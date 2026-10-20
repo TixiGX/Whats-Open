@@ -9,7 +9,9 @@ pub mod widgets;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, TextureHandle};
@@ -131,6 +133,8 @@ pub struct App {
     pub attach_rx: Option<Receiver<Option<PathBuf>>>,
 
     pub config: Config,
+    /// Diventa vera quando una seconda istanza chiede di mostrare la finestra.
+    pub focus_flag: Option<Arc<AtomicBool>>,
     pub toast: Option<Toast>,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
@@ -138,6 +142,13 @@ pub struct App {
 }
 
 impl App {
+    /// Collega la bandierina di istanza singola: se una seconda copia parte,
+    /// questa finestra torna davanti invece di restare sepolta.
+    pub fn with_focus_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.focus_flag = Some(flag);
+        self
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, paths: Paths) -> anyhow::Result<Self> {
         crate::theme::apply(&cc.egui_ctx);
         let paths_for_config = paths.data.clone();
@@ -193,6 +204,7 @@ impl App {
             rec_path: PathBuf::new(),
             attach_rx: None,
             config: Config::load(&paths_for_config),
+            focus_flag: None,
             toast: None,
             last_expiry: Instant::now(),
             scroll_bottom: false,
@@ -881,6 +893,14 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.ctx = ctx.clone();
+        if let Some(flag) = self.focus_flag.as_ref() {
+            if flag.swap(false, Ordering::Relaxed) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Informational,
+                ));
+            }
+        }
         self.drain_events();
         self.tick(&ctx);
         self.handle_dropped_files(&ctx);

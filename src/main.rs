@@ -54,8 +54,8 @@ fn main() -> anyhow::Result<()> {
 
     // Una sola istanza: due processi sullo stesso archivio significano
     // messaggi doppi e lock contesi.
-    let _instance = match platform::single_instance(&paths) {
-        Ok(lock) => Some(lock),
+    let instance = match platform::single_instance(&paths) {
+        Ok(lock) => lock,
         Err(message) => {
             eprintln!("{message}");
             log::warn!("{message}");
@@ -63,6 +63,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
     };
+    let focus_flag = instance.focus_flag();
 
     let icon = load_icon();
     let mut viewport = egui::ViewportBuilder::default()
@@ -89,7 +90,7 @@ fn main() -> anyhow::Result<()> {
                 Some(phone) => app.begin_pairing(phone),
                 None => app,
             };
-            Ok(Box::new(app))
+            Ok(Box::new(app.with_focus_flag(focus_flag.clone())))
         }),
     );
 

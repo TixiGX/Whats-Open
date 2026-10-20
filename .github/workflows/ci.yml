@@ -87,7 +87,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update > tools.log 2>&1
           apt-get install -y --no-install-recommends \
-            curl ca-certificates build-essential pkg-config git jq \
+            curl ca-certificates build-essential pkg-config git jq file \
             libasound2-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libssl-dev >> tools.log 2>&1 \
@@ -125,7 +125,8 @@ jobs:
       - name: Verifica
         run: |
           file target/release/whats-open
-          ldd target/release/whats-open | head -5
+          ldd target/release/whats-open > ldd.log 2>&1 || true
+          head -5 ldd.log
 
       - uses: actions/upload-artifact@v4
         with:
@@ -147,7 +148,7 @@ jobs:
       - name: Strumenti
         run: |
           apk add --no-cache \
-            build-base musl-dev pkgconf git curl ca-certificates tar gzip jq \
+            build-base musl-dev pkgconf git curl ca-certificates tar gzip jq file \
             autoconf automake libtool linux-headers > tools.log 2>&1 \
             || { tail -30 tools.log | sed 's/^/::error::/'; exit 1; }
 
@@ -207,7 +208,7 @@ jobs:
         run: |
           file target/x86_64-unknown-linux-musl/release/whats-open > file.log 2>&1 || true
           cat file.log
-          grep -q "statically linked" file.log \
+          grep -Eq "statically linked|static-pie linked" file.log \
             || { echo "::error::il binario musl non è statico"; exit 1; }
 
       - uses: actions/upload-artifact@v4
