@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, Sense, TextureHandle, Vec2};
 
-use crate::engine::{Cmd, ReplyTarget};
+use crate::engine::Cmd;
 use crate::media;
 use crate::model::{Kind, Message, Quote, Status};
 use crate::theme::Palette;
@@ -1008,19 +1008,22 @@ impl App {
     }
 
     fn thumb_texture(&mut self, index: usize) -> Option<TextureHandle> {
-        let message = self.messages.get(index)?;
-        let key = if message.local_preview.is_some() {
-            format!("local:{}", message.id)
-        } else {
-            format!("thumb:{}", message.id)
+        let (key, bytes) = {
+            let message = self.messages.get(index)?;
+            let key = if message.local_preview.is_some() {
+                format!("local:{}", message.id)
+            } else {
+                format!("thumb:{}", message.id)
+            };
+            if self.gfx.get(&key).is_some() {
+                return self.gfx.get(&key);
+            }
+            let bytes = message
+                .local_preview
+                .clone()
+                .or_else(|| message.thumb.clone())?;
+            (key, bytes)
         };
-        if let Some(texture) = self.gfx.get(&key) {
-            return Some(texture);
-        }
-        let bytes = message
-            .local_preview
-            .clone()
-            .or_else(|| message.thumb.clone())?;
         let (image, _, _) = super::gfx::image_from_bytes(&bytes)?;
         let ctx = self.ctx.clone();
         self.gfx.insert(&ctx, key.clone(), image, false);

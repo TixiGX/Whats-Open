@@ -6,79 +6,164 @@ protocollo in puro Rust, nessuna WebView e nessun runtime JavaScript.
 Whats-Open non incorpora WhatsApp Web: parla direttamente con i server usando
 la libreria [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust)
 (protocollo Signal/Noise, media cifrati end-to-end, sincronizzazione dello
-storico). L'interfaccia è disegnata con egui, l'audio passa da cpal, i video da
-ffmpeg.
+storico). L'interfaccia è disegnata con egui, l'audio passa da cpal o dal player
+di sistema, i video da ffmpeg o dal player di sistema.
 
-## Cosa sa fare
+## Funzioni
 
 - Accesso con QR oppure con codice di accoppiamento (`--pair +39…`)
 - Chat singole e di gruppo, ricerca, anteprime, non letti, presenza e
   "sta scrivendo"
 - Testo, foto, video, documenti, sticker, posizioni e contatti
 - Foto, video e audio **view-once**: si aprono una sola volta, poi il contenuto
-  viene eliminato dalla cache locale
+  sparisce dalla cache locale
 - Note vocali: registrazione dal microfono (Ogg/Opus) e riproduzione con forma
   d'onda e avanzamento
 - Lettore video integrato con pausa e ricerca
 - Risposte citate, reazioni, modifica ed eliminazione dei propri messaggi
 - Spunte di invio/consegna/lettura, ricevute di ascolto per i vocali
 - Storico iniziale importato dal telefono
-- Trascinamento dei file nella finestra oppure selettore di sistema
+- File trascinati nella finestra, selettore di sistema o percorso a mano
+- Istanza singola, log su file, diagnostica integrata
 
 Non ci sono chiamate, storie o canali: l'obiettivo è un client leggero, non una
 copia di WhatsApp Web.
 
-## Requisiti
+## Installazione
 
-- Linux con X11 o Wayland
-- `ffmpeg` per riprodurre audio e video (opzionale: senza, il resto funziona)
-- Per compilare: Rust 1.94 o successivo, `pkg-config`, le librerie di sviluppo
-  di ALSA, Wayland/X11 e OpenGL/EGL.
+### Binario statico (qualsiasi distribuzione)
 
-Su Debian/Ubuntu:
+L'archivio `whats-open-linux-x86_64-musl.tar.gz` contiene un binario
+**statico**: non dipende dalla versione di glibc né dalla distribuzione. Va bene
+su Debian, Ubuntu, Fedora, RHEL, openSUSE, Arch, Alpine, NixOS, Void, Gentoo,
+Slackware, sui sistemi immutabili (Silverblue, MicroOS) e nelle sandbox Flatpak
+o Distrobox.
 
 ```bash
-sudo apt install build-essential pkg-config libasound2-dev libxkbcommon-dev \
-  libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-  libgl1-mesa-dev libegl1-mesa-dev ffmpeg
+tar xzf whats-open-linux-x86_64-musl.tar.gz
+cd whats-open-0.1.0-linux-x86_64-musl
+./install.sh --user          # in ~/.local, senza root
+# oppure: sudo ./install.sh  # in /usr/local
 ```
 
-## Compilare
+### Binario glibc
+
+`whats-open-linux-x86_64-glibc.tar.gz` è compilato su Debian 11 (glibc 2.31):
+funziona su Debian 11+, Ubuntu 20.04+, Fedora 33+, RHEL 9+, openSUSE Leap 15.4+,
+Arch e derivate. Stessa procedura di installazione.
+
+### Dal codice sorgente
 
 ```bash
 cargo build --release
-./target/release/whats-open
+sudo ./packaging/install.sh --prefix=/usr
 ```
 
-Il binario incorpora l'icona e le icone dell'interfaccia: non servono file
-esterni.
+Su qualunque architettura (x86_64, aarch64, riscv64, …) basta una toolchain
+Rust: la compilazione avviene in locale con le librerie del sistema.
 
-## Installare
+## Dipendenze
+
+Tutto ciò che serve a disegnare la finestra arriva dal sistema; l'app non
+include né GTK, né Qt, né WebKit.
+
+| Componente | Serve per | Se manca |
+|---|---|---|
+| `libX11`/`libxkbcommon` oppure `libwayland` | finestra | non parte (obbligatorio) |
+| `libGL`/`libEGL` | disegno | non parte: prova `LIBGL_ALWAYS_SOFTWARE=1` |
+| `libasound` (ALSA) | altoparlanti e microfono | messaggi vocali e audio non suonano |
+| `ffmpeg`/`ffprobe` | decodifica audio/video, anteprime | apre i media col player di sistema |
+| `xdg-desktop-portal` + `zenity` | finestra "allega file" | si può indicare il percorso a mano |
+| `notify-send` | avvisi di sistema | nessun avviso, il resto funziona |
+| `xdg-open`, `gio`, `kde-open` | apertura documenti | usa il percorso in cache |
+
+Installazione delle dipendenze per famiglia di distribuzioni:
 
 ```bash
-install -Dm755 target/release/whats-open ~/.local/bin/whats-open
-install -Dm644 res/whats-open.desktop ~/.local/share/applications/whats-open.desktop
-for s in 16 24 32 48 64 128 256 512; do
-  install -Dm644 "dist/icons/whats-open-$s.png" \
-    ~/.local/share/icons/hicolor/${s}x${s}/apps/whats-open.png
-done
+# Debian, Ubuntu, Mint, Pop!_OS, Raspbian
+sudo apt install libasound2 libx11-6 libxkbcommon0 libgl1 libegl1 ffmpeg \
+     xdg-desktop-portal
+
+# Fedora, RHEL, Rocky, AlmaLinux
+sudo dnf install alsa-lib libX11 libxkbcommon mesa-libGL libglvnd-egl ffmpeg \
+     xdg-desktop-portal
+
+# Arch, Manjaro, EndeavourOS
+sudo pacman -S alsa-lib libx11 libxkbcommon mesa ffmpeg xdg-desktop-portal
+
+# openSUSE Tumbleweed / Leap
+sudo zypper install libasound2 libX11-6 libxkbcommon0 Mesa-libGL1 \
+     Mesa-libEGL1 ffmpeg xdg-desktop-portal
+
+# Alpine (binario musl)
+sudo apk add alsa-lib libx11 libxkbcommon mesa-gl ffmpeg xdg-desktop-portal
 ```
 
-(Le icone derivate si generano con `python3 dist/icon-gen.py dist/whats-open.png`.)
+Per compilare servono anche gli header di sviluppo (`libasound2-dev`,
+`alsa-lib-devel`, `alsa-lib`, …), `pkg-config` e un compilatore C (per SQLite).
 
 ## Uso
 
 ```bash
-whats-open                 # accesso con QR
-whats-open --pair 3933...  # accesso con codice a 8 caratteri
+whats-open                    # accesso con QR
+whats-open --pair 3933...     # accesso con codice a 8 caratteri
+whats-open --doctor           # ambiente, dipendenze e percorsi
+whats-open --help
 ```
 
 Dati locali:
 
-- `~/.local/share/whats-open/session.db` — credenziali e chiavi della sessione
-- `~/.local/share/whats-open/messages.db` — chat e messaggi
-- `~/.cache/whats-open/media/` — allegati scaricati
-- `~/.cache/whats-open/whats-open.log` — registro
+| Percorso | Contenuto |
+|---|---|
+| `~/.local/share/whats-open/session.db` | credenziali e chiavi della sessione |
+| `~/.local/share/whats-open/messages.db` | chat e messaggi |
+| `~/.local/share/whats-open/config.json` | preferenze |
+| `~/.cache/whats-open/media/` | allegati scaricati |
+| `~/.cache/whats-open/whats-open.log` | registro (ruota a 4 MB) |
+
+Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
+
+### Preferenze
+
+`config.json` si modifica anche dall'interfaccia (Impostazioni):
+
+```json
+{
+  "system_player": false,   // true: audio/video col player di sistema
+  "system_fonts": true,     // font di sistema come riserva (emoji, CJK, arabo)
+  "graceful_exit": true     // chiude la sessione in modo pulito all'uscita
+}
+```
+
+### Variabili d'ambiente
+
+| Variabile | Effetto |
+|---|---|
+| `WHATS_OPEN_NO_SYSTEM_FONTS=1` | usa solo i font incorporati |
+| `WINIT_UNIX_BACKEND=x11` o `wayland` | forza il backend grafico |
+| `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
+| `RUST_LOG=debug` | log più verboso |
+
+## Se qualcosa non funziona
+
+1. `whats-open --doctor` stampa distribuzione, sessione grafica, glibc, ffmpeg,
+   scheda audio, font trovati e percorsi. Le stesse informazioni sono nel
+   pulsante **Diagnostica** delle impostazioni.
+2. Il log è in `~/.cache/whats-open/whats-open.log` (pulsante **Apri il log**).
+3. **La finestra non si apre**: manca un server grafico o i driver OpenGL.
+   Controlla `echo $WAYLAND_DISPLAY $DISPLAY` e prova
+   `LIBGL_ALWAYS_SOFTWARE=1 whats-open`.
+4. **Audio muto**: verifica `libasound` e il dispositivo predefinito
+   (`--doctor`). In assenza di ALSA imposta "Usa il player di sistema".
+5. **Video neri**: manca ffmpeg o il codec; con "Usa il player di sistema" il
+   file si apre nel player del desktop.
+6. **Selettore file che non risponde**: installa `xdg-desktop-portal` e
+   `zenity`, oppure usa **Allega → Da percorso…**.
+7. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
+   lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
+   automaticamente come riserva.
+8. **Sessione danneggiata**: dalla schermata di errore usa **Cancella la
+   sessione**, oppure rimuovi `~/.local/share/whats-open/session.db`.
 
 ## Architettura
 
@@ -92,8 +177,22 @@ interfaccia egui  ──comandi──▶  thread di rete (Tokio + whatsapp-rust)
 - `src/ui` — lista chat, conversazione, lettori, impostazioni
 - `src/play` — audio (cpal + ffmpeg), video (ffmpeg), registrazione
 - `src/store` — archivio SQLite di chat e messaggi
+- `src/platform.rs` — ambiente, font di sistema, apertura esterna, istanza singola
 - `src/theme.rs`, `src/icons.rs` — tema monocromatico e icone disegnate a mano
+- `packaging/install.sh` — installazione e rimozione su qualsiasi distribuzione
+
+## Icona
+
+Il logo è un fumetto aperto con la cornetta, bianco su nero. Sorgente:
+`dist/icon-gen.py` (Pillow); le icone incorporate nel binario e quelle per il
+tema del desktop si rigenerano con:
+
+```bash
+python3 dist/icon-gen.py dist/whats-open.png
+```
 
 ## Licenza
 
-MIT.
+MIT — vedi [LICENSE](LICENSE).
+
+Whats-Open non è affiliato a WhatsApp LLC né a Meta.

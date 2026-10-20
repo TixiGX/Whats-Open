@@ -218,15 +218,15 @@ fn spawn_reader(
     let guard = Arc::new(Mutex::new(child));
     let (tx, rx) = sync_channel::<Vec<u8>>(2);
 
-    let mut stdout = {
-        let mut lock = match guard.lock() {
-            Ok(lock) => lock,
-            Err(_) => return (rx, guard),
-        };
-        match lock.as_mut().and_then(|child| child.stdout.take()) {
-            Some(stdout) => stdout,
-            None => return (rx, guard),
-        }
+    // Prendi lo stdout lasciando il figlio dentro il suo lucchetto: così
+    // `guard` resta libero di essere restituito.
+    let taken = guard
+        .lock()
+        .ok()
+        .and_then(|mut lock| lock.as_mut().and_then(|child| child.stdout.take()));
+    let mut stdout = match taken {
+        Some(stdout) => stdout,
+        None => return (rx, guard),
     };
 
     let guard_thread = guard.clone();

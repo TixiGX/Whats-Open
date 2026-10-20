@@ -70,7 +70,7 @@ pub fn image_from_bytes(bytes: &[u8]) -> Option<(ColorImage, u32, u32)> {
         [decoded.width as usize, decoded.height as usize],
         &decoded.rgba,
     );
-    Some((image, decoded.width, decoded.height))
+    Some((image, decoded.width as u32, decoded.height as u32))
 }
 
 /// Codice QR bianco e nero, con il margine di silenzio che serve allo scanner.

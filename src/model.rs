@@ -274,3 +274,83 @@ impl Chat {
         util::display_name(&self.name, &self.id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_message(text: &str) -> Message {
+        Message {
+            text: text.to_string(),
+            kind: Kind::Text,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn anteprima_dei_diversi_tipi() {
+        assert_eq!(text_message("buongiorno").preview(), "buongiorno");
+        assert_eq!(text_message("").body(), "");
+
+        let voice = Message {
+            kind: Kind::Voice,
+            duration: 65,
+            ..Default::default()
+        };
+        assert_eq!(voice.preview(), "Vocale · 1:05");
+
+        let doc = Message {
+            kind: Kind::Document,
+            file_name: "contratto.pdf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(doc.preview(), "contratto.pdf");
+
+        let deleted = Message {
+            deleted: true,
+            ..Default::default()
+        };
+        assert_eq!(deleted.body(), "Questo messaggio è stato eliminato");
+    }
+
+    #[test]
+    fn tipi_e_stati_fanno_avanti_e_indietro() {
+        for kind in [
+            Kind::Text,
+            Kind::Image,
+            Kind::Video,
+            Kind::Voice,
+            Kind::Audio,
+            Kind::Document,
+            Kind::Sticker,
+            Kind::Location,
+            Kind::Contact,
+            Kind::System,
+            Kind::Other,
+        ] {
+            assert_eq!(Kind::from_str(kind.as_str()), kind);
+        }
+        for status in [
+            Status::Pending,
+            Status::Sent,
+            Status::Delivered,
+            Status::Read,
+            Status::Played,
+            Status::Failed,
+        ] {
+            assert_eq!(Status::from_str(status.as_str()), status);
+        }
+        assert!(Status::Read > Status::Delivered);
+        assert!(Status::Delivered > Status::Sent);
+    }
+
+    #[test]
+    fn estensione_dei_media() {
+        assert_eq!(text_message("").media_ext(), "bin");
+        let video = Message {
+            kind: Kind::Video,
+            ..Default::default()
+        };
+        assert_eq!(video.media_ext(), "mp4");
+    }
+}

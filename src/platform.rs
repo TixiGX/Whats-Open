@@ -169,7 +169,10 @@ fn default_audio_device() -> Option<String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     let host = cpal::default_host();
     let device = host.default_output_device()?;
-    let name = device.name().unwrap_or_else(|_| "sconosciuto".to_string());
+    let name = device
+        .description()
+        .map(|description| description.name().to_string())
+        .unwrap_or_else(|_| "sconosciuto".to_string());
     Some(name)
 }
 

@@ -218,15 +218,37 @@ impl App {
             });
         ui.add_space(14.0);
         let pair = self.pair_phone.clone();
-        if ui
-            .add(
-                egui::Button::new(RichText::new("Riprova").size(13.0))
-                    .fill(Palette::SURFACE)
-                    .corner_radius(egui::CornerRadius::same(9)),
-            )
-            .clicked()
-        {
+        let mut retry = false;
+        let mut wipe = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Riprova").size(13.0))
+                        .fill(Palette::SURFACE)
+                        .corner_radius(egui::CornerRadius::same(9)),
+                )
+                .clicked()
+            {
+                retry = true;
+            }
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Cancella la sessione").size(13.0))
+                        .fill(Palette::SURFACE)
+                        .corner_radius(egui::CornerRadius::same(9)),
+                )
+                .on_hover_text("Utile se l'archivio della sessione è danneggiato")
+                .clicked()
+            {
+                wipe = true;
+            }
+        });
+        if retry {
             self.begin_engine(pair);
+        }
+        if wipe {
+            self.reset_session();
+            self.note("Sessione cancellata: collega di nuovo il telefono");
         }
     }
 }

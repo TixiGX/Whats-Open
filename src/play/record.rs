@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{sync_channel, Sender};
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -15,7 +15,7 @@ use cpal::Sample as _;
 pub struct Recorder {
     path: PathBuf,
     stream: cpal::Stream,
-    tx: Sender<Vec<f32>>,
+    tx: std::sync::mpsc::SyncSender<Vec<f32>>,
     stop: Arc<AtomicBool>,
     child: Arc<Mutex<Option<Child>>>,
     started: Instant,
@@ -191,7 +191,7 @@ fn build_input(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     format: cpal::SampleFormat,
-    tx: Sender<Vec<f32>>,
+    tx: std::sync::mpsc::SyncSender<Vec<f32>>,
     waveform: Arc<Mutex<Vec<u8>>>,
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;

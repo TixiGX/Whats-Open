@@ -249,3 +249,48 @@ pub fn temp_media_path(cache_dir: &Path, name: &str) -> PathBuf {
     let _ = std::fs::create_dir_all(&dir);
     dir.join(name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estensioni_dai_tipi_mime() {
+        assert_eq!(ext_for_mime("image/jpeg", "bin"), "jpg");
+        assert_eq!(ext_for_mime("image/png", "bin"), "png");
+        assert_eq!(ext_for_mime("audio/ogg; codecs=opus", "bin"), "ogg");
+        assert_eq!(ext_for_mime("video/mp4", "bin"), "mp4");
+        assert_eq!(ext_for_mime("application/pdf", "bin"), "pdf");
+        assert_eq!(ext_for_mime("x/sconosciuto", "bin"), "bin");
+    }
+
+    #[test]
+    fn nomi_di_file_sicuri() {
+        assert_eq!(safe_file_name("../../etc/passwd", "file"), "passwd");
+        assert_eq!(safe_file_name("", "file"), "file");
+        assert_eq!(safe_file_name("contratto.pdf", "file"), "contratto.pdf");
+        let tricky = safe_file_name("\\\\server\\condivisione\\doc.pdf", "file");
+        assert!(!tricky.contains('\\'));
+    }
+
+    #[test]
+    fn riconosce_i_tipi_dal_percorso() {
+        assert!(is_image_path(Path::new("/tmp/a.JPG")));
+        assert!(is_image_path(Path::new("/tmp/a.webp")));
+        assert!(is_video_path(Path::new("/tmp/a.mp4")));
+        assert!(is_audio_path(Path::new("/tmp/a.ogg")));
+        assert!(!is_image_path(Path::new("/tmp/a.pdf")));
+        assert_eq!(mime_for_path(Path::new("/tmp/a.png")), "image/png");
+        assert_eq!(
+            mime_for_path(Path::new("/tmp/a.opus")),
+            "audio/ogg; codecs=opus"
+        );
+    }
+
+    #[test]
+    fn percorso_temporaneo_nella_cache() {
+        let path = temp_media_path(Path::new("/tmp/cache"), "video-1.mp4");
+        assert!(path.starts_with("/tmp/cache"));
+        assert_eq!(path.file_name().unwrap(), "video-1.mp4");
+    }
+}

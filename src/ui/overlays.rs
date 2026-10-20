@@ -424,7 +424,7 @@ impl App {
             return;
         };
 
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let mut close = false;
 
         egui::Area::new(egui::Id::new("viewer"))

@@ -6,6 +6,3 @@
 pub mod audio;
 pub mod record;
 pub mod video;
-
-pub use audio::AudioPlayer;
-pub use video::VideoPlayer;

@@ -52,7 +52,7 @@ pub fn install_system_fonts(ctx: &egui::Context) {
 pub fn apply(ctx: &egui::Context) {
     install_system_fonts(ctx);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
 
     style.text_styles = std::collections::BTreeMap::from([
         (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
@@ -112,5 +112,5 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.open.corner_radius = egui::CornerRadius::same(8);
 
     style.visuals = v;
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }

@@ -429,3 +429,116 @@ impl Store {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store(name: &str) -> Store {
+        let path = std::env::temp_dir().join(format!(
+            "whats-open-test-{name}-{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        Store::open(&path).expect("apertura archivio di prova")
+    }
+
+    fn message(chat: &str, id: &str, ts: i64, text: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            chat_id: chat.to_string(),
+            sender: "393330000000@s.whatsapp.net".to_string(),
+            sender_name: "Prova".to_string(),
+            ts,
+            kind: Kind::Text,
+            text: text.to_string(),
+            status: Status::Sent,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn messaggi_restano_in_ordine_cronologico() {
+        let mut store = temp_store("ordine");
+        store
+            .insert_messages(&[
+                message("a@s.whatsapp.net", "2", 200, "secondo"),
+                message("a@s.whatsapp.net", "1", 100, "primo"),
+                message("a@s.whatsapp.net", "3", 300, "terzo"),
+            ])
+            .unwrap();
+
+        let loaded = store.load_messages("a@s.whatsapp.net", 50).unwrap();
+        let bodies: Vec<&str> = loaded.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(bodies, ["primo", "secondo", "terzo"]);
+    }
+
+    #[test]
+    fn inserimento_ripetuto_non_duplica() {
+        let store = temp_store("duplicati");
+        let msg = message("b@s.whatsapp.net", "x1", 10, "ciao");
+        assert!(store.insert_message(&msg).unwrap());
+        assert!(!store.insert_message(&msg).unwrap());
+        assert_eq!(store.load_messages("b@s.whatsapp.net", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lo_stato_non_torna_indietro() {
+        let store = temp_store("stato");
+        let msg = message("c@s.whatsapp.net", "s1", 5, "ciao");
+        store.insert_message(&msg).unwrap();
+        store
+            .update_status("c@s.whatsapp.net", "s1", Status::Read)
+            .unwrap();
+        store
+            .update_status("c@s.whatsapp.net", "s1", Status::Sent)
+            .unwrap();
+        let loaded = store.load_messages("c@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded[0].status, Status::Read);
+    }
+
+    #[test]
+    fn modifica_e_revoca_aggiornano_la_riga() {
+        let store = temp_store("modifiche");
+        store
+            .insert_message(&message("d@s.whatsapp.net", "e1", 7, "vecchio"))
+            .unwrap();
+        store
+            .apply_edit("d@s.whatsapp.net", "e1", "nuovo", 8)
+            .unwrap();
+        store.apply_revoke("d@s.whatsapp.net", "e1").unwrap();
+
+        let loaded = store.load_messages("d@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded[0].text, "nuovo");
+        assert!(loaded[0].edited);
+        assert!(loaded[0].deleted);
+    }
+
+    #[test]
+    fn i_messaggi_scaduti_vengono_eliminati() {
+        let store = temp_store("scadenza");
+        let mut msg = message("e@s.whatsapp.net", "v1", 10, "effimero");
+        msg.expire_ts = 20;
+        store.insert_message(&msg).unwrap();
+
+        let removed = store.delete_expired(30).unwrap();
+        assert_eq!(removed, vec!["v1".to_string()]);
+        assert!(store.load_messages("e@s.whatsapp.net", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rinominare_l_id_di_invio_conserva_il_messaggio() {
+        let store = temp_store("rinomina");
+        store
+            .insert_message(&message("f@s.whatsapp.net", "local-1", 11, "in uscita"))
+            .unwrap();
+        store
+            .rename_message_id("f@s.whatsapp.net", "local-1", "SERVER1", 12)
+            .unwrap();
+
+        let loaded = store.load_messages("f@s.whatsapp.net", 10).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "SERVER1");
+        assert_eq!(loaded[0].ts, 12);
+    }
+}

@@ -322,7 +322,7 @@ impl App {
                     self.ingest(message);
                 }
             }
-            Event::History { chats, messages } => {
+            Event::History { chats, messages, done } => {
                 for chat in chats {
                     if !self.index.contains_key(&chat.id) {
                         let _ = self.store.upsert_chat(&chat);
@@ -333,6 +333,9 @@ impl App {
                 self.store.insert_messages(&messages).ok();
                 if let Some(selected) = self.selected.clone() {
                     self.messages = self.store.load_messages(&selected, 300).unwrap_or_default();
+                }
+                if done {
+                    self.note("Cronologia importata");
                 }
             }
             Event::ChatName { chat, name } => {
@@ -470,7 +473,7 @@ impl App {
         }
     }
 
-    fn reset_session(&mut self) {
+    pub fn reset_session(&mut self) {
         if let Some(engine) = self.engine.take() {
             engine.stop();
         }
@@ -651,8 +654,8 @@ impl App {
         }
 
         // Registrazione: stop automatico dopo due minuti.
-        if let Some(recorder) = self.recorder.as_ref() {
-            if recorder.seconds() >= 120.0 {
+        if let Some(seconds) = self.recorder.as_ref().map(|recorder| recorder.seconds()) {
+            if seconds >= 120.0 {
                 self.stop_recording(true);
             }
         }
@@ -704,19 +707,13 @@ impl App {
         let _ = video_frame;
 
         // File scelti dal selettore.
-        if let Some(rx) = self.attach_rx.as_ref() {
+        if let Some(rx) = self.attach_rx.take() {
             match rx.try_recv() {
-                Ok(Some(path)) => {
-                    self.attach_rx = None;
-                    self.send_file(path, false);
-                }
-                Ok(None) => {
-                    self.attach_rx = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.attach_rx = None;
-                }
+                Ok(Some(path)) => self.send_file(path, None),
+                Ok(None) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.attach_rx = Some(rx);
                     ctx.request_repaint_after(Duration::from_millis(120));
                 }
             }
@@ -733,7 +730,7 @@ impl App {
                 .raw
                 .dropped_files
                 .iter()
-                .filter_map(|file| file.path.clone())
+                .filter_map(|file| Some(file.path().to_path_buf()))
                 .collect()
         });
         for path in dropped.into_iter().take(10) {
@@ -880,22 +877,23 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.ctx = ctx.clone();
         self.drain_events();
-        self.tick(ctx);
-        self.handle_dropped_files(ctx);
+        self.tick(&ctx);
+        self.handle_dropped_files(&ctx);
 
         if self.logged_in() {
-            egui::SidePanel::left("chats")
-                .exact_width(322.0)
+            egui::Panel::left("chats")
+                .exact_size(322.0)
                 .resizable(false)
                 .frame(
                     egui::Frame::new()
                         .fill(Palette::PANEL)
                         .inner_margin(egui::Margin::ZERO),
                 )
-                .show(ctx, |ui| self.sidebar_ui(ui));
+                .show(ui, |ui| self.sidebar_ui(ui));
 
             egui::CentralPanel::default()
                 .frame(
@@ -903,7 +901,7 @@ impl eframe::App for App {
                         .fill(Palette::BG)
                         .inner_margin(egui::Margin::ZERO),
                 )
-                .show(ctx, |ui| self.chat_ui(ui));
+                .show(ui, |ui| self.chat_ui(ui));
         } else {
             egui::CentralPanel::default()
                 .frame(
@@ -911,12 +909,12 @@ impl eframe::App for App {
                         .fill(Palette::BG)
                         .inner_margin(egui::Margin::ZERO),
                 )
-                .show(ctx, |ui| self.login_ui(ui));
+                .show(ui, |ui| self.login_ui(ui));
         }
 
         self.apply_actions();
-        self.overlays(ctx);
-        self.toast_ui(ctx);
+        self.overlays(&ctx);
+        self.toast_ui(&ctx);
     }
 
     /// Chiusura pulita: la sessione salva chiavi e stato prima di sparire.

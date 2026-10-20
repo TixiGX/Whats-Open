@@ -51,3 +51,45 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn il_file_mancante_usa_i_valori_predefiniti() {
+        let dir = std::env::temp_dir().join(format!("whats-open-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = Config::load(&dir);
+        assert!(!config.system_player);
+        assert!(config.system_fonts);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn salvataggio_e_rilettura() {
+        let dir = std::env::temp_dir().join(format!("whats-open-cfg2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config = Config {
+            system_player: true,
+            ..Default::default()
+        };
+        config.save(&dir);
+        assert!(Config::load(&dir).system_player);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn configurazione_corrotta_non_blocca_l_avvio() {
+        let dir = std::env::temp_dir().join(format!("whats-open-cfg3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(Config::path(&dir), "{ non json").unwrap();
+        let config = Config::load(&dir);
+        assert!(!config.system_player);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

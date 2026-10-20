@@ -74,6 +74,7 @@ impl Paths {
         let safe_id: String = message_id
             .chars()
             .map(|c| {
+                // Il punto non entra: `..` nel nome di un file è una via di fuga.
                 if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                     c
                 } else {
@@ -293,6 +294,13 @@ impl log::Log for FileLogger {
 }
 
 pub fn init_logging(path: &Path) {
+    // Un log che cresce senza fine prima o poi riempie la home: sopra i 4 MB
+    // riparte da zero, tenendo da parte il file precedente.
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > 4 * 1024 * 1024 {
+            let _ = std::fs::rename(path, path.with_extension("old.log"));
+        }
+    }
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -308,4 +316,67 @@ pub fn init_logging(path: &Path) {
 #[allow(dead_code)]
 fn _assert_local_tz() -> Option<chrono::DateTime<Local>> {
     Local.timestamp_opt(0, 0).single()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jid_e_nomi_leggibili() {
+        assert_eq!(jid_user("393331234567@s.whatsapp.net"), "393331234567");
+        assert_eq!(jid_user("393331234567:12@s.whatsapp.net"), "393331234567");
+        assert_eq!(phone_display("393331234567"), "+393331234567");
+        assert!(jid_is_group("120363000000000000@g.us"));
+        assert!(!jid_is_group("393331234567@s.whatsapp.net"));
+        assert!(jid_is_status("status@broadcast"));
+        assert!(jid_is_newsletter("123@newsletter"));
+    }
+
+    #[test]
+    fn nomi_da_mostrare() {
+        assert_eq!(
+            display_name("Anna", "393331234567@s.whatsapp.net"),
+            "Anna"
+        );
+        assert_eq!(
+            display_name("", "393331234567@s.whatsapp.net"),
+            "+393331234567"
+        );
+        assert_eq!(initials("Maria Rossi"), "MR");
+        assert_eq!(initials(""), "?");
+    }
+
+    #[test]
+    fn troncamento_rispetta_i_caratteri() {
+        assert_eq!(truncate("ciao", 10), "ciao");
+        let cut = truncate("perché è così", 6);
+        assert_eq!(cut.chars().count(), 6);
+        assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn misure_e_durate() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(2048), "2 KB");
+        assert_eq!(human_duration(5), "0:05");
+        assert_eq!(human_duration(65), "1:05");
+        assert_eq!(human_duration(3725), "1:02:05");
+    }
+
+    #[test]
+    fn percorsi_nella_cache_sono_sicuri() {
+        let paths = Paths {
+            data: PathBuf::from("/tmp/d"),
+            cache: PathBuf::from("/tmp/c"),
+            db: PathBuf::from("/tmp/d/messages.db"),
+            session: PathBuf::from("/tmp/d/session.db"),
+            media: PathBuf::from("/tmp/c/media"),
+        };
+        let path = paths.cached_media("39333@s.whatsapp.net", "../etc/passwd", "ogg");
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains('/'));
+        assert!(!name.contains(".."));
+        assert!(path.starts_with("/tmp/c/media"));
+    }
 }
