@@ -97,6 +97,10 @@ impl App {
         }
         let path = self.cache_path(&message);
         if path.exists() {
+            if self.config.system_player {
+                self.play_externally(&path);
+                return;
+            }
             match VideoPlayer::open(&path) {
                 Ok(player) => {
                     self.view_view_once = message.view_once;
@@ -143,6 +147,11 @@ impl App {
 
         let path = self.cache_path(&message);
         if path.exists() {
+            if self.config.system_player {
+                self.play_externally(&path);
+                self.mark_played(&message.id, true);
+                return;
+            }
             match AudioPlayer::open(&path) {
                 Ok(player) => {
                     player.set_volume(1.0);
@@ -157,7 +166,8 @@ impl App {
                     return;
                 }
                 Err(error) => {
-                    self.note(error);
+                    self.note(format!("{error} — apro con il player di sistema"));
+                    self.play_externally(&path);
                 }
             }
         }
@@ -169,6 +179,12 @@ impl App {
                 autoplay: true,
             },
         );
+    }
+
+    fn play_externally(&mut self, path: &Path) {
+        if !util::open_external_checked(path) {
+            self.note("Nessun programma di sistema per aprire il file");
+        }
     }
 
     pub fn open_document(&mut self, index: usize) {
@@ -703,11 +719,43 @@ impl App {
                         RichText::new(if media::ffmpeg_available() {
                             "ffmpeg: disponibile"
                         } else {
-                            "ffmpeg: non trovato (audio e video non riproducibili)"
+                            "ffmpeg: non trovato — audio e video si aprono con il player di sistema"
                         })
                         .size(12.0)
                         .color(Palette::MUTED),
                     );
+
+                    let mut system_player = self.config.system_player;
+                    if ui
+                        .checkbox(
+                            &mut system_player,
+                            RichText::new("Usa il player di sistema per audio e video")
+                                .size(12.0)
+                                .color(Palette::TEXT),
+                        )
+                        .changed()
+                    {
+                        self.config.system_player = system_player;
+                        self.config.save(&self.paths.data);
+                    }
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Diagnostica").size(12.0))
+                            .on_hover_text("Ambiente, dipendenze e percorsi")
+                            .clicked()
+                        {
+                            self.ctx.copy_text(crate::platform::report(&self.paths));
+                            self.note("Diagnostica copiata negli appunti");
+                        }
+                        if ui
+                            .button(RichText::new("Apri il log").size(12.0))
+                            .clicked()
+                        {
+                            util::open_external(&self.paths.log_file());
+                        }
+                    });
 
                     ui.add_space(10.0);
                     ui.separator();

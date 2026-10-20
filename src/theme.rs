@@ -22,7 +22,36 @@ impl Palette {
     pub const ONLINE: Color32 = Color32::from_rgb(220, 220, 220);
 }
 
+/// Aggiunge i font di sistema come riserva: emoji, arabo, ebraico, devanagari,
+/// thai e CJK restano leggibili anche senza font dedicati nel binario.
+pub fn install_system_fonts(ctx: &egui::Context) {
+    if std::env::var_os("WHATS_OPEN_NO_SYSTEM_FONTS").is_some() {
+        return;
+    }
+    let fonts = crate::platform::load_system_fonts();
+    if fonts.is_empty() {
+        return;
+    }
+
+    let mut definitions = egui::FontDefinitions::default();
+    for (name, bytes) in fonts {
+        definitions
+            .font_data
+            .insert(name.clone(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            definitions
+                .families
+                .entry(family)
+                .or_default()
+                .push(name.clone());
+        }
+    }
+    ctx.set_fonts(definitions);
+}
+
 pub fn apply(ctx: &egui::Context) {
+    install_system_fonts(ctx);
+
     let mut style = (*ctx.style()).clone();
 
     style.text_styles = std::collections::BTreeMap::from([

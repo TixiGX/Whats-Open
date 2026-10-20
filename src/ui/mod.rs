@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Color32, RichText, TextureHandle};
 
+use crate::config::Config;
 use crate::engine::{Cmd, Engine, Event, ReplyTarget};
 use crate::model::{Chat, Kind, Message, Status};
 use crate::play::audio::AudioPlayer;
@@ -129,6 +130,7 @@ pub struct App {
 
     pub attach_rx: Option<Receiver<Option<PathBuf>>>,
 
+    pub config: Config,
     pub toast: Option<Toast>,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
@@ -138,6 +140,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, paths: Paths) -> anyhow::Result<Self> {
         crate::theme::apply(&cc.egui_ctx);
+        let paths_for_config = paths.data.clone();
         let store = Store::open(&paths.db)?;
         let chats = store.load_chats().unwrap_or_default();
 
@@ -189,6 +192,7 @@ impl App {
             rec_start: Instant::now(),
             rec_path: PathBuf::new(),
             attach_rx: None,
+            config: Config::load(&paths_for_config),
             toast: None,
             last_expiry: Instant::now(),
             scroll_bottom: false,
@@ -719,6 +723,24 @@ impl App {
         }
     }
 
+    /// File trascinati nella finestra: si inviano alla chat aperta.
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        if !self.logged_in() || self.selected.is_none() {
+            return;
+        }
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        for path in dropped.into_iter().take(10) {
+            self.send_file(path, None);
+        }
+    }
+
     pub fn apply_actions(&mut self) {
         let actions = std::mem::take(&mut self.actions);
         for action in actions {
@@ -862,6 +884,7 @@ impl eframe::App for App {
         self.ctx = ctx.clone();
         self.drain_events();
         self.tick(ctx);
+        self.handle_dropped_files(ctx);
 
         if self.logged_in() {
             egui::SidePanel::left("chats")
@@ -894,6 +917,25 @@ impl eframe::App for App {
         self.apply_actions();
         self.overlays(ctx);
         self.toast_ui(ctx);
+    }
+
+    /// Chiusura pulita: la sessione salva chiavi e stato prima di sparire.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(recorder) = self.recorder.take() {
+            recorder.cancel();
+        }
+        if let Some(audio) = self.audio.take() {
+            drop(audio);
+        }
+        if let Some(video) = self.video.take() {
+            drop(video);
+        }
+        if self.config.graceful_exit {
+            if let Some(engine) = self.engine.take() {
+                engine.stop();
+            }
+        }
+          log::info!("chiusura completata");
     }
 }
 

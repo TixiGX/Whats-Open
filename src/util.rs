@@ -242,7 +242,12 @@ pub fn truncate(text: &str, max_chars: usize) -> String {
 }
 
 pub fn open_external(path: &Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+    crate::platform::open_external(path);
+}
+
+/// Come [`open_external`], ma dice se un programma è partito davvero.
+pub fn open_external_checked(path: &Path) -> bool {
+    crate::platform::open_external(path)
 }
 
 pub fn timestamp_ms() -> u128 {

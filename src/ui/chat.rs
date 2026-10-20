@@ -711,12 +711,27 @@ impl App {
                 }
 
                 ui.horizontal(|ui| {
-                    if crate::icons::Icon::Attach
+                    let mut pick = false;
+                    let mut by_path = false;
+                    let attach = crate::icons::Icon::Attach
                         .button(ui, 30.0, Palette::MUTED)
-                        .on_hover_text("Allega un file")
-                        .clicked()
-                    {
+                        .on_hover_text("Allega un file");
+                    egui::Popup::menu(&attach).show(|ui| {
+                        ui.set_min_width(196.0);
+                        if ui.button("Scegli un file…").clicked() {
+                            pick = true;
+                            ui.close();
+                        }
+                        if ui.button("Da percorso…").clicked() {
+                            by_path = true;
+                            ui.close();
+                        }
+                    });
+                    if pick {
                         self.pick_file();
+                    }
+                    if by_path {
+                        self.path_modal = true;
                     }
 
                     let response = ui.add(
@@ -892,6 +907,10 @@ impl App {
         };
         if bytes.is_empty() {
             self.note("Il file è vuoto");
+            return;
+        }
+        if bytes.len() > 100 * 1024 * 1024 {
+            self.note("File troppo grande: il limite di WhatsApp è 100 MB");
             return;
         }
 
