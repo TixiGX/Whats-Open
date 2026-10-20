@@ -392,6 +392,7 @@ impl App {
 
     pub fn overlays(&mut self, ctx: &egui::Context) {
         self.call_ui(ctx);
+        self.once_text_ui(ctx);
         self.image_viewer(ctx);
         self.video_overlay(ctx);
         self.settings_ui(ctx);
@@ -399,6 +400,46 @@ impl App {
         self.pair_modal_ui(ctx);
         self.path_modal_ui(ctx);
         self.logout_confirm(ctx);
+    }
+
+    /// Il testo di un messaggio "una volta sola": si vede una volta, poi sparisce.
+    fn once_text_ui(&mut self, ctx: &egui::Context) {
+        let Some((_, _, text)) = self.once_text.clone() else {
+            return;
+        };
+        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        egui::Area::new(egui::Id::new("once-text"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(Palette::PANEL)
+                    .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+                    .corner_radius(egui::CornerRadius::same(14))
+                    .inner_margin(egui::Margin::symmetric(20, 16))
+                    .show(ui, |ui| {
+                        ui.set_max_width(360.0);
+                        ui.label(
+                            RichText::new("Messaggio · una volta")
+                                .size(11.0)
+                                .color(Palette::FAINT),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(&text).size(15.0).color(Palette::TEXT));
+                        ui.add_space(12.0);
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.button("Chiudi").clicked() {
+                                    close = true;
+                                }
+                            },
+                        );
+                    });
+            });
+        if close {
+            self.once_text = None;
+        }
     }
 
     /// Pannello della chiamata: squillo in arrivo, composizione, chiamata attiva.

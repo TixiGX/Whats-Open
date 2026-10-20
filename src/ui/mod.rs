@@ -138,6 +138,8 @@ pub struct App {
 
     pub viewer: Option<String>,
     pub view_view_once: bool,
+    /// Testo di un messaggio "una volta sola" appena svelato: (chat, id, testo).
+    pub once_text: Option<(String, String, String)>,
     pub viewer_image: Option<TextureHandle>,
     pub viewer_loading: bool,
     pub video: Option<VideoState>,
@@ -225,6 +227,7 @@ impl App {
             actions: Vec::new(),
             viewer: None,
             view_view_once: false,
+            once_text: None,
             viewer_image: None,
             viewer_loading: false,
             video: None,
@@ -1191,26 +1194,57 @@ impl App {
                 Action::OpenDoc(index) => self.open_document(index),
                 Action::Download(index) => self.download_message(index),
                 Action::RevealOnce(index) => {
-                    let mut played: Option<(String, String)> = None;
-                    if let Some(message) = self.messages.get_mut(index) {
-                        if message.view_once && !message.played {
-                            message.played = true;
-                            played = Some((message.chat_id.clone(), message.id.clone()));
+                    let Some(message) = self.messages.get(index).cloned() else {
+                        continue;
+                    };
+                    if message.played {
+                        continue;
+                    }
+                    // Prima si apre il contenuto, poi lo si consuma: i lettori
+                    // rifiutano ciò che risulta già visto.
+                    let pending_before = self.pending.len();
+                    if message.kind == Kind::Text {
+                        self.once_text = Some((
+                            message.chat_id.clone(),
+                            message.id.clone(),
+                            message.text.clone(),
+                        ));
+                    } else {
+                        match message.kind {
+                            Kind::Image | Kind::Sticker => self.open_image(index),
+                            Kind::Video | Kind::Gif => self.open_video(index),
+                            Kind::Voice | Kind::Audio => self.toggle_audio(index),
+                            Kind::Document => self.open_document(index),
+                            _ => self.download_message(index),
                         }
                     }
-                    if let Some((chat, id)) = played {
-                        // Il media già scaricato resta in cache per questa
-                        // sessione, ma il contenuto non è più riapribile.
-                        self.store.consume_once(&chat, &id).ok();
-                        // Il mittente deve sapere che l'abbiamo visto.
-                        if let Some(engine) = self.engine.as_ref() {
-                            engine.send(Cmd::Played {
-                                chat,
-                                sender: None,
-                                ids: vec![id],
-                            });
+                    let opened = match message.kind {
+                        Kind::Text => true,
+                        Kind::Voice | Kind::Audio => self
+                            .audio
+                            .as_ref()
+                            .map(|audio| audio.id == message.id)
+                            .unwrap_or(false),
+                        Kind::Video | Kind::Gif => self
+                            .video
+                            .as_ref()
+                            .map(|video| video.id == message.id)
+                            .unwrap_or(false),
+                        _ => {
+                            self.viewer.as_deref() == Some(message.id.as_str())
+                                || self.viewer_loading
+                                || self.pending.len() > pending_before
                         }
+                    };
+                    if !opened {
+                        self.once_text = None;
+                        self.note("Contenuto non disponibile su questo dispositivo");
+                        continue;
                     }
+                    // Il contenuto resta a schermo finché è aperto, ma non è
+                    // più riapribile né leggibile dall'archivio.
+                    self.mark_played(&message.id, true);
+                    self.store.consume_once(&message.chat_id, &message.id).ok();
                 }
                 Action::Reply(index) => {
                     if let Some(message) = self.messages.get(index).cloned() {
