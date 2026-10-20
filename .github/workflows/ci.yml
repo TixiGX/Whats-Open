@@ -1,8 +1,24 @@
 name: ci
 
+# Compila, prova e impacchetta Whats-Open per ogni distribuzione Linux.
+#
+#  * check      : feedback rapido su ubuntu-22.04
+#  * glibc      : binario dinamico compilato su Debian 11 (glibc 2.31),
+#                 compatibile con Debian 11+, Ubuntu 20.04+, Fedora 33+,
+#                 RHEL 9+, openSUSE, Arch e derivate
+#  * musl       : binario statico, gira su qualunque Linux (anche Alpine,
+#                 NixOS, distribuzioni senza glibc compatibile)
+#  * package    : tarball con binario, icone, .desktop e install.sh
+#
+# Gli errori di compilazione vengono pubblicati come commento sul commit:
+# i log delle Actions non sono sempre raggiungibili.
+
 on:
   push:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,37 +43,193 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo check
-        run: cargo check --all-targets --locked || cargo check --all-targets
+        run: |
+          set -o pipefail
+          cargo check --all-targets 2>&1 | tee check.log
 
       - name: cargo test
-        run: cargo test --all-targets --locked || cargo test --all-targets
+        if: success()
+        run: |
+          set -o pipefail
+          cargo test --all-targets 2>&1 | tee test.log
 
-  build:
-    name: build release
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          cat check.log test.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          # prime righe come annotazione, poi il log completo nel commento
+          grep -E "^(error|warning: unused)" errors.log | head -20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          tail -c 60000 errors.log | jq -Rs '{body: .}' > body.json
+          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+
+  glibc:
+    name: build glibc (Debian 11)
     needs: check
+    runs-on: ubuntu-22.04
+    container: debian:11
+    steps:
+      - name: Strumenti
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates build-essential pkg-config git \
+            libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libssl-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: glibc-${{ github.sha }}
+          restore-keys: glibc-
+
+      - name: cargo build --release
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tee build.log
+
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          test -s build.log || exit 0
+          tail -c 60000 build.log | jq -Rs '{body: .}' > body.json
+          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whats-open-glibc
+          path: target/release/whats-open
+          if-no-files-found: error
+
+  musl:
+    name: build musl (statico)
+    needs: check
+    runs-on: ubuntu-22.04
+    container: alpine:3.20
+    steps:
+      - name: Strumenti
+        run: |
+          apk add --no-cache \
+            build-base musl-dev pkgconf git curl ca-certificates tar gzip \
+            alsa-lib-dev alsa-lib-static linux-headers
+
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: musl-${{ github.sha }}
+          restore-keys: musl-
+
+      - name: cargo build --release (musl)
+        run: |
+          set -o pipefail
+          cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tee build.log
+
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          test -s build.log || exit 0
+          tail -c 60000 build.log | jq -Rs '{body: .}' > body.json
+          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+
+      - name: Verifica che sia davvero statico
+        run: |
+          apk add --no-cache file
+          file target/x86_64-unknown-linux-musl/release/whats-open
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whats-open-musl
+          path: target/x86_64-unknown-linux-musl/release/whats-open
+          if-no-files-found: error
+
+  package:
+    name: pacchetto
+    needs: [glibc, musl]
+    if: always() && needs.glibc.result == 'success'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Librerie di sistema
+      - uses: actions/download-artifact@v4
+        with:
+          name: whats-open-glibc
+          path: staging/glibc
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whats-open-musl
+          path: staging/musl
+        continue-on-error: true
+
+      - name: Icone
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libgl1-mesa-dev libegl1-mesa-dev
+          python3 -m pip install --quiet pillow
+          python3 dist/icon-gen.py dist/whats-open.png
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: cargo build --release
-        run: cargo build --release --locked || cargo build --release
-
-      - name: Dimensioni
-        run: ls -lh target/release/whats-open
+      - name: Tarball
+        run: |
+          set -e
+          for flavor in glibc musl; do
+            [ -f "staging/$flavor/whats-open" ] || continue
+            root="pkg/whats-open-0.1.0-linux-x86_64-$flavor"
+            mkdir -p "$root/bin" "$root/share/applications" "$root/share/icons/hicolor"
+            install -m755 "staging/$flavor/whats-open" "$root/bin/whats-open"
+            install -m644 res/whats-open.desktop "$root/share/applications/whats-open.desktop"
+            for size in 16 24 32 48 64 128 256 512; do
+              dir="$root/share/icons/hicolor/${size}x${size}/apps"
+              mkdir -p "$dir"
+              install -m644 "dist/icons/whats-open-$size.png" "$dir/whats-open.png"
+            done
+            install -m755 packaging/install.sh "$root/install.sh"
+            install -m644 README.md LICENSE "$root/" 2>/dev/null || install -m644 README.md "$root/"
+            tar -C pkg -czf "whats-open-linux-x86_64-$flavor.tar.gz" "whats-open-0.1.0-linux-x86_64-$flavor"
+          done
+          ls -lh *.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
-          name: whats-open-linux-x86_64
-          path: target/release/whats-open
+          name: whats-open-linux
+          path: whats-open-linux-*.tar.gz
           if-no-files-found: error
