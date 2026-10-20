@@ -1,21 +1,63 @@
 name: ci
+
 on:
   push:
   workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  build:
+  check:
+    name: check & test
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain
-        run: rustup toolchain install stable --profile minimal && rustc --version && cargo --version
-      - name: Cache cargo
-        uses: actions/cache@v4
+
+      - name: Librerie di sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        run: cargo check --all-targets --locked || cargo check --all-targets
+
+      - name: cargo test
+        run: cargo test --all-targets --locked || cargo test --all-targets
+
+  build:
+    name: build release
+    needs: check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Librerie di sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build --release
+        run: cargo build --release --locked || cargo build --release
+
+      - name: Dimensioni
+        run: ls -lh target/release/whats-open
+
+      - uses: actions/upload-artifact@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build & test
-        run: cargo test --workspace --all-targets
+          name: whats-open-linux-x86_64
+          path: target/release/whats-open
+          if-no-files-found: error

@@ -1,0 +1,59 @@
+[package]
+name = "whats-open"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+description = "Whats Open — un client WhatsApp nativo, minimale e monocromatico per Linux"
+license = "MIT"
+repository = "https://github.com/TixiGX/Whats-Open"
+default-run = "whats-open"
+
+[dependencies]
+anyhow = "1"
+# Solo per l'ora locale: la libreria del protocollo porta già chrono.
+chrono = { version = "0.4", features = ["clock"] }
+cpal = "0.18"
+eframe = { version = "0.36.2", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+egui = "0.36.2"
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+] }
+log = "0.4"
+qrcode = { version = "0.14", default-features = false }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "fs",
+    "process",
+] }
+# Protocollo WhatsApp (Signal, Noise, media E2E, storico). Una sola dipendenza:
+# la libreria ri-esporta i propri crate interni.
+whatsapp-rust = { version = "=0.7.0", default-features = false, features = [
+    "sqlite-storage",
+    "tokio-transport",
+    "tokio-runtime",
+    "ureq-client",
+    "tokio-native",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
