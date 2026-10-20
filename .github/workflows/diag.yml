@@ -20,16 +20,16 @@ jobs:
       - name: Installa
         shell: bash
         run: |
-          set -x
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update 2>&1 | tail -5
+          apt-get update > update.log 2>&1 || { tail -20 update.log | sed 's/^/::error::update /'; exit 1; }
           apt-get install -y --no-install-recommends \
             curl ca-certificates build-essential pkg-config git \
             libasound2-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libgl1-mesa-dev libegl1-mesa-dev libssl-dev 2>&1 | tail -15
-          ldd --version | head -1
-          pkg-config --modversion alsa
+            libgl1-mesa-dev libegl1-mesa-dev libssl-dev > install.log 2>&1 \
+            || { tail -25 install.log | sed 's/^/::error::install /'; exit 1; }
+          ldd --version | head -1 | sed 's/^/::error::glibc /'
+          pkg-config --modversion alsa | sed 's/^/::error::alsa /'
 
   alpine:
     name: strumenti alpine
@@ -38,14 +38,10 @@ jobs:
     steps:
       - name: Installa
         run: |
-          set -x
-          apk add --no-cache build-base musl-dev pkgconf git curl ca-certificates tar gzip alsa-lib-dev linux-headers
-          echo "=== libasound"
-          ls -l /usr/lib/libasound* || true
-          echo "=== contenuto alsa-lib-dev"
-          apk info -L alsa-lib-dev | grep -i asound || true
-          echo "=== pacchetti alsa"
-          apk search alsa | head -20
-          echo "=== pkgconfig"
-          pkg-config --libs alsa
-          pkg-config --static --libs alsa
+          apk add --no-cache build-base musl-dev pkgconf git curl ca-certificates tar gzip alsa-lib-dev linux-headers > install.log 2>&1 \
+            || { tail -25 install.log | sed 's/^/::error::install /'; exit 1; }
+          { echo "=== libasound"; ls -l /usr/lib/libasound* 2>&1
+            echo "=== contenuto alsa-lib-dev"; apk info -L alsa-lib-dev
+            echo "=== pacchetti alsa"; apk search alsa
+            echo "=== pkg-config"; pkg-config --libs alsa; pkg-config --static --libs alsa
+          } 2>&1 | sed 's/^/::error::diag /'
