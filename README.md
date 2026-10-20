@@ -189,13 +189,22 @@ interfaccia egui  ──comandi──▶  thread di rete (Tokio + whatsapp-rust)
 
 ## Icona
 
-Il logo è un fumetto aperto con la cornetta, bianco su nero. Sorgente:
-`dist/icon-gen.py` (Pillow); le icone incorporate nel binario e quelle per il
-tema del desktop si rigenerano con:
+Il logo è un fumetto aperto con la cornetta, bianco su nero. Le icone sono già
+nel repository (`res/` per il binario, `dist/icons/` per il tema del desktop):
+un clone compila e si impacchetta senza dipendenze grafiche. Il generatore
+`dist/icon-gen.py` serve solo a rifarle, e richiede Pillow:
 
 ```bash
 python3 dist/icon-gen.py dist/whats-open.png
 ```
+
+## Integrazione con il desktop
+
+`install.sh` copia binario, voce di menu e icone in tutte le misure previste dal
+tema (`16`, `24`, `32`, `48`, `64`, `128`, `256`, `512`). Se `update-desktop-database` o `gtk-update-icon-cache` sono presenti le
+cache vengono aggiornate subito; altrimenti il desktop le rigenera al prossimo
+accesso. Il file `.desktop` dichiara `StartupWMClass=whats-open`, così la
+finestra viene associata all'icona anche su GNOME e KDE.
 
 ## Licenza
 
