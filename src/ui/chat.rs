@@ -353,8 +353,9 @@ impl App {
             } else if matches!(bubble.kind, Kind::Image | Kind::Video | Kind::Gif)
                 && self.thumb_texture(index).is_some()
             {
-                // La miniatura è larga 252 più i margini interni del fumetto.
-                width.max(276.0)
+                // La miniatura arriva a 252: il fumetto non deve lasciare
+                // spazio vuoto oltre quello.
+                width.max(252.0)
             } else {
                 width.max(246.0)
             };
@@ -892,8 +893,11 @@ impl App {
             return response.clicked();
         }
 
+        // La piastrella prende la larghezza del fumetto: così non resta
+        // spazio vuoto a destra e l'ora sta sotto, non di fianco.
+        let tile = ui.available_width().clamp(180.0, 252.0);
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(224.0, 74.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(tile, 74.0), Sense::click());
         let fill = if text_color == pal().own_text {
             crate::theme::mix(pal().own_bubble, pal().own_text, 0.09)
         } else {
@@ -951,8 +955,9 @@ impl App {
         text_color: Color32,
         muted: Color32,
     ) {
+        let tile = ui.available_width().clamp(180.0, 252.0);
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(224.0, 58.0), Sense::click());
+            ui.allocate_exact_size(Vec2::new(tile, 58.0), Sense::click());
         let fill = if text_color == pal().own_text {
             crate::theme::mix(pal().own_bubble, pal().own_text, 0.08)
         } else {
