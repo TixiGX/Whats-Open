@@ -35,6 +35,70 @@ pub enum Icon {
     Gif,
 }
 
+/// Ruota un punto dell'icona attorno al centro (coordinate 24×24).
+fn spin(rect: Rect, x: f32, y: f32, degrees: f32) -> Pos2 {
+    let base = map(rect, x, y);
+    if degrees == 0.0 {
+        return base;
+    }
+    let center = map(rect, 12.0, 12.0);
+    let radians = degrees.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    let dx = base.x - center.x;
+    let dy = base.y - center.y;
+    Pos2::new(
+        center.x + dx * cos - dy * sin,
+        center.y + dx * sin + dy * cos,
+    )
+}
+
+/// La cornetta: arco e ricevitore, disegnata una volta sola e riusata
+/// (anche ruotata) dal tasto per chiudere la chiamata.
+fn draw_receiver(ui: &Ui, rect: Rect, color: Color32, degrees: f32) {
+    let painter = ui.painter();
+    let w = (rect.width() / 24.0).max(0.5);
+    let stroke = Stroke::new((w * 1.7).max(1.2), color);
+    let c = map(rect, 12.0, 12.0);
+    let r = w * 6.6;
+    let mut arc = Vec::new();
+    for i in 0..10 {
+        let angle = -2.6 + i as f32 * 0.22;
+        arc.push(Pos2::new(c.x + angle.cos() * r, c.y + angle.sin() * r));
+    }
+    if degrees != 0.0 {
+        let radians = degrees.to_radians();
+        let (sin, cos) = radians.sin_cos();
+        for point in arc.iter_mut() {
+            let dx = point.x - c.x;
+            let dy = point.y - c.y;
+            *point = Pos2::new(c.x + dx * cos - dy * sin, c.y + dx * sin + dy * cos);
+        }
+    }
+    painter.add(egui::Shape::line(arc, stroke));
+    let shape = [
+        (7.2, 4.4),
+        (4.6, 7.0),
+        (5.6, 9.6),
+        (14.4, 18.4),
+        (17.0, 19.4),
+        (19.6, 16.8),
+        (18.6, 14.2),
+        (15.8, 13.2),
+        (14.2, 14.8),
+        (9.4, 10.0),
+        (11.0, 8.4),
+        (10.0, 5.6),
+        (7.2, 4.4),
+    ];
+    painter.add(egui::Shape::line(
+        shape
+            .iter()
+            .map(|(x, y)| spin(rect, *x, *y, degrees))
+            .collect(),
+        stroke,
+    ));
+}
+
 fn map(rect: Rect, x: f32, y: f32) -> Pos2 {
     Pos2::new(
         rect.left() + rect.width() * x / 24.0,
@@ -327,45 +391,11 @@ impl Icon {
                     thin,
                 ));
             }
-            Icon::Phone => {
-                // Cornetta: arco in alto a sinistra, arco in basso a destra.
-                let c = map(rect, 12.0, 12.0);
-                let r = w * 6.6;
-                let mut pts = Vec::new();
-                for i in 0..10 {
-                    let angle = -2.6 + i as f32 * 0.22;
-                    pts.push(Pos2::new(c.x + angle.cos() * r, c.y + angle.sin() * r));
-                }
-                painter.add(egui::Shape::line(pts, thin));
-                painter.add(egui::Shape::line(
-                    vec![
-                        map(rect, 7.2, 4.4),
-                        map(rect, 4.6, 7.0),
-                        map(rect, 5.6, 9.6),
-                        map(rect, 14.4, 18.4),
-                        map(rect, 17.0, 19.4),
-                        map(rect, 19.6, 16.8),
-                        map(rect, 18.6, 14.2),
-                        map(rect, 15.8, 13.2),
-                        map(rect, 14.2, 14.8),
-                        map(rect, 9.4, 10.0),
-                        map(rect, 11.0, 8.4),
-                        map(rect, 10.0, 5.6),
-                        map(rect, 7.2, 4.4),
-                    ],
-                    thin,
-                ));
-            }
+            Icon::Phone => draw_receiver(ui, rect, color, 0.0),
             Icon::PhoneOff => {
-                let c = map(rect, 12.0, 12.0);
-                let r = w * 6.6;
-                let mut pts = Vec::new();
-                for i in 0..10 {
-                    let angle = -2.6 + i as f32 * 0.22;
-                    pts.push(Pos2::new(c.x + angle.cos() * r, c.y + angle.sin() * r));
-                }
-                painter.add(egui::Shape::line(pts, thin));
-                painter.line_segment([map(rect, 5.0, 5.0), map(rect, 19.0, 19.0)], thin);
+                // Cornetta abbassata: la stessa forma ruotata di 135°, come
+                // il tasto "chiudi" di WhatsApp.
+                draw_receiver(ui, rect, color, 135.0);
             }
             Icon::MicOff => {
                 let body = Rect::from_min_max(map(rect, 9.0, 3.0), map(rect, 15.0, 13.0));

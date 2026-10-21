@@ -1136,7 +1136,7 @@ impl App {
             widgets::waveform(ui.painter(), rect, level, pal().text, pal().faint);
 
             if crate::icons::Icon::Stop
-                .button(ui, 32.0, pal().white)
+                .button(ui, 32.0, pal().text)
                 .on_hover_text("Invia vocale")
                 .clicked()
             {

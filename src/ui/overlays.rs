@@ -613,7 +613,7 @@ impl App {
                         ui.horizontal(|ui| {
                             if phase == CallPhase::Ringing {
                                 if crate::icons::Icon::Phone
-                                    .button(ui, 34.0, pal().white)
+                                    .button(ui, 34.0, pal().text)
                                     .on_hover_text("Rispondi")
                                     .clicked()
                                 {
@@ -621,7 +621,7 @@ impl App {
                                 }
                                 if video
                                     && crate::icons::Icon::Video
-                                        .button(ui, 34.0, pal().white)
+                                        .button(ui, 34.0, pal().text)
                                         .on_hover_text("Rispondi in video")
                                         .clicked()
                                 {
@@ -684,8 +684,8 @@ impl App {
                                     }
                                 }
                                 if crate::icons::Icon::PhoneOff
-                                    .button(ui, 34.0, pal().danger)
-                                    .on_hover_text("Chiudi")
+                                    .filled_button(ui, 38.0, pal().panel, pal().text)
+                                    .on_hover_text("Chiudi la chiamata")
                                     .clicked()
                                 {
                                     hangup = true;
@@ -945,7 +945,7 @@ impl App {
                                 Vec2::new(rect.width() * fraction, 3.0),
                             ),
                             egui::CornerRadius::same(1),
-                            pal().white,
+                            pal().text,
                         );
                     }
                     if response.clicked() {

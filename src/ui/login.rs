@@ -196,7 +196,7 @@ impl App {
                     RichText::new(&pretty)
                         .size(31.0)
                         .monospace()
-                        .color(pal().white),
+                        .color(pal().text),
                 );
             });
         ui.add_space(14.0);
