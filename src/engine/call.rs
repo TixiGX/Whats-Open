@@ -936,11 +936,13 @@ async fn monitor(
 fn call_error_text(err: &CallError) -> String {
     match err {
         CallError::NoDevices => {
-            "Nessun dispositivo raggiungibile per questo contatto".to_string()
+            "Nessun dispositivo raggiungibile per questo contatto: scrivigli prima un \
+             messaggio (basta un saluto) e riprova la chiamata"
+                .to_string()
         }
         CallError::MissingDeviceIdentity => {
-            "Il telefono non ha ancora autorizzato le chiamate da questo dispositivo: \
-             apri WhatsApp sul telefono e riprova"
+            "Le chiamate da questo dispositivo non sono ancora autorizzate: manda prima \
+             un messaggio al contatto, poi richiama"
                 .to_string()
         }
         CallError::ResponseTimeout => {
