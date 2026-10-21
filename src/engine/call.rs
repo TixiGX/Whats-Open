@@ -368,7 +368,10 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
 // ─────────────────────────── stato della chiamata ───────────────────────────
 
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::schemas;
 use whatsapp_rust::types::call::{CallAction, IncomingCall};
+use whatsapp_rust::waproto::buffa::MessageField;
+use whatsapp_rust::waproto::whatsapp as wa;
 use whatsapp_rust::voip::{CallEvent, CallHandle};
 
 use super::video::{FrameSlot, VideoSession};
@@ -467,6 +470,7 @@ pub async fn accept(
     state: SharedCall,
     sink: EventSink,
 ) {
+    let started_ms = crate::util::timestamp_ms();
     let incoming = { state.lock().await.incoming.clone() };
     let Some(incoming) = incoming else {
         return;
@@ -542,7 +546,7 @@ pub async fn accept(
                 session.media = media;
                 session.camera_on = camera_live;
             }
-            monitor(state, sink, peer, video, false).await;
+            monitor(client, state, sink, peer, video, false, started_ms).await;
         }
         Err(err) => {
             log::warn!("accettazione chiamata: {err}");
@@ -577,6 +581,7 @@ pub async fn start_outgoing(
     state: SharedCall,
     sink: EventSink,
 ) {
+    let started_ms = crate::util::timestamp_ms();
     let Ok(jid) = chat.parse::<Jid>() else {
         emit(&sink, Event::Notice("Indirizzo non valido".into()));
         return;
@@ -654,7 +659,7 @@ pub async fn start_outgoing(
                 session.camera_on = camera_live;
                 session.active = false;
             }
-            monitor(state, sink, chat, video, true).await;
+            monitor(client, state, sink, chat, video, true, started_ms).await;
         }
         Err(err) => {
             log::warn!("chiamata in uscita: {err}");
@@ -679,11 +684,21 @@ pub async fn start_outgoing(
 
 /// Sorveglia la chiamata attiva: segnala quando il media è collegato e
 /// quando la chiamata finisce (per qualsiasi motivo).
-async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, outgoing: bool) {
+async fn monitor(
+    client: Arc<Client>,
+    state: SharedCall,
+    sink: EventSink,
+    peer: String,
+    video: bool,
+    outgoing: bool,
+    started_ms: i64,
+) {
     let handle = { state.lock().await.handle.clone() };
     let Some(handle) = handle else {
         return;
     };
+    let call_id = handle.call_id().to_string();
+    let mut connected_at: Option<std::time::Instant> = None;
     let events = handle.events();
     let mut announced = false;
     // Squillo senza risposta: oltre questo tempo la chiamata si chiude da
@@ -697,6 +712,7 @@ async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, 
                     Ok(CallEvent::RelayAllocated) => {
                         if !announced {
                             announced = true;
+                            connected_at = Some(std::time::Instant::now());
                             state.lock().await.active = true;
                             emit(&sink, Event::Call { phase: CallPhase::Active, peer: peer.clone(), video });
                         }
@@ -743,6 +759,23 @@ async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, 
         session.video = false;
         session.peer.clear();
     }
+    // La cronologia del telefono è app-state come le altre: una voce per
+    // chiamata, con esito e durata. Senza questa scrittura la chiamata
+    // esisterebbe solo su questo dispositivo.
+    let duration = connected_at
+        .map(|at| at.elapsed().as_secs())
+        .unwrap_or(0);
+    let (result, incoming) = if connected_at.is_some() {
+        (wa::call_log_record::CallResult::Connected, !outgoing)
+    } else if outgoing {
+        (wa::call_log_record::CallResult::Cancelled, false)
+    } else {
+        (wa::call_log_record::CallResult::Missed, true)
+    };
+    spawn_call_log(
+        client, peer.clone(), call_id, started_ms, duration, video, incoming, result,
+    );
+
     emit(
         &sink,
         Event::Call {
@@ -753,6 +786,48 @@ async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, 
     );
 }
 
+/// Scrive una voce nel registro chiamate del telefono (`WAWebCallLogSync`).
+/// È la stessa mutazione app-state che manda WhatsApp Web: così la chiamata
+/// compare nella cronologia anche sul telefono.
+#[allow(clippy::too_many_arguments)]
+fn spawn_call_log(
+    client: Arc<Client>,
+    peer: String,
+    call_id: String,
+    started_ms: i64,
+    duration_s: u64,
+    video: bool,
+    incoming: bool,
+    result: wa::call_log_record::CallResult,
+) {
+    tokio::spawn(async move {
+        let record = wa::CallLogRecord {
+            call_result: Some(result as i32),
+            duration: Some(duration_s as i64),
+            start_time: Some(started_ms),
+            is_incoming: Some(incoming),
+            is_video: Some(video),
+            call_id: (!call_id.is_empty()).then(|| call_id.clone()),
+            ..Default::default()
+        };
+        let value = wa::SyncActionValue {
+            call_log_action: MessageField::some(wa::sync_action_value::CallLogAction {
+                call_log_record: MessageField::some(record),
+                ..Default::default()
+            }),
+            timestamp: Some(crate::util::timestamp_ms()),
+            ..Default::default()
+        };
+        match client
+            .send_app_state_action(&schemas::CALL_LOG, &[], &value)
+            .await
+        {
+            Ok(()) => log::info!("registro chiamate: {peer} ({call_id}, {duration_s} s)"),
+            Err(err) => log::warn!("registro chiamate per {peer}: {err}"),
+        }
+    });
+}
+
 pub async fn reject(client: Arc<Client>, state: SharedCall, sink: EventSink) {
     let incoming = { state.lock().await.incoming.take() };
     let Some(incoming) = incoming else {
@@ -760,7 +835,21 @@ pub async fn reject(client: Arc<Client>, state: SharedCall, sink: EventSink) {
     };
     let peer = incoming.from.to_string();
     let video = matches!(&incoming.action, CallAction::Offer { is_video: true, .. });
+    let call_id = match &incoming.action {
+        CallAction::Offer { call_id, .. } => call_id.clone(),
+        _ => incoming.stanza_id.clone(),
+    };
     let _ = client.voip().reject(&incoming).await;
+    spawn_call_log(
+        client,
+        peer.clone(),
+        call_id,
+        crate::util::timestamp_ms(),
+        0,
+        video,
+        true,
+        wa::call_log_record::CallResult::Rejected,
+    );
     emit(
         &sink,
         Event::Call {
@@ -806,11 +895,26 @@ pub async fn set_camera(state: SharedCall, on: bool) {
 
 /// Chiamata persa (offerta arrivata mentre eravamo offline): non squilla,
 /// si registra soltanto.
-pub fn missed(call: &whatsapp_rust::types::call::MissedCall, sink: &EventSink) {
+pub fn missed(
+    client: Arc<Client>,
+    call: &whatsapp_rust::types::call::MissedCall,
+    sink: &EventSink,
+) {
+    let peer = call.from.to_string();
+    spawn_call_log(
+        client,
+        peer.clone(),
+        call.call_id.clone(),
+        crate::util::timestamp_ms(),
+        0,
+        false,
+        true,
+        wa::call_log_record::CallResult::Missed,
+    );
     emit(
         sink,
         Event::CallMissed {
-            peer: call.from.to_string(),
+            peer,
             video: false,
         },
     );

@@ -76,10 +76,20 @@ fn main() -> anyhow::Result<()> {
     let focus_flag = instance.focus_flag();
 
     let icon = load_icon();
+    // `WHATS_OPEN_WINDOW=560x430` serve alle prove: la finestra parte
+    // piccola per mostrare com'è la versione non massimizzata.
+    let (start_w, start_h) = std::env::var("WHATS_OPEN_WINDOW")
+        .ok()
+        .and_then(|value| {
+            let (w, h) = value.split_once('x')?;
+            Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
+        })
+        .unwrap_or((1040.0, 720.0));
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Whats-Open")
         .with_app_id("whats-open")
-        .with_inner_size([1040.0, 720.0])
+        .with_inner_size([start_w.max(560.0), start_h.max(430.0)])
         // Sotto gli 820 px la finestra passa a una schermata per volta:
         // la chat resta leggibile anche non massimizzata o su schermi piccoli.
         .with_min_inner_size([560.0, 430.0]);

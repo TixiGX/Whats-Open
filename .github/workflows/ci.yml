@@ -319,6 +319,26 @@ jobs:
           fi
           import -display :99 -window root smoke/demo.png 2> smoke/demo.err
           kill "$demo" 2>/dev/null
+          sleep 1
+
+          # Terza istanza: la stessa demo in una finestra non massimizzata
+          # (560×430), per verificare che testo e comandi restino leggibili.
+          mkdir -p smoke/nhome smoke/ndata smoke/ncache smoke/nruntime
+          chmod 700 smoke/nruntime
+          HOME="$PWD/smoke/nhome" XDG_RUNTIME_DIR="$PWD/smoke/nruntime" \
+            XDG_DATA_HOME="$PWD/smoke/ndata" XDG_CACHE_HOME="$PWD/smoke/ncache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_WINDOW=560x430 \
+            "$bin" > smoke/nout.log 2> smoke/nerr.log &
+          narrow=$!
+          sleep 8
+          if kill -0 "$narrow" 2>/dev/null; then
+            echo "== finestra 560x430: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== finestra 560x430: uscita da sola ==" >> smoke.log
+            tail -10 smoke/nerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/narrow.png 2> smoke/narrow.err
+          kill "$narrow" 2>/dev/null
 
           shot=""
           dshot=""
@@ -394,6 +414,7 @@ jobs:
           path: |
             smoke/shot.png
             smoke/demo.png
+            smoke/narrow.png
           if-no-files-found: ignore
           retention-days: 7
 

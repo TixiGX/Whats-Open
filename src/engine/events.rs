@@ -171,7 +171,7 @@ pub async fn handle(
             call::on_incoming(client.clone(), call.clone(), &calls, &sink).await;
         }
         WaEvent::MissedCall(call) => {
-            call::missed(call, &sink);
+            call::missed(client.clone(), call, &sink);
         }
         WaEvent::CallEndedElsewhere(_) => {
             emit(
