@@ -1758,6 +1758,37 @@ impl App {
                     });
             });
     }
+
+    /// Porta a schermo il fotogramma video più recente, se è cambiato.
+    fn poll_call_video(&mut self, ctx: &egui::Context) {
+        let in_video = self.call.as_ref().is_some_and(|call| call.video);
+        if !in_video {
+            if self.call_tex.is_some() {
+                self.call_tex = None;
+                self.call_frame_seq = 0;
+            }
+            return;
+        }
+        let Some(frame) = self.call_video.latest(self.call_frame_seq) else {
+            return;
+        };
+        self.call_frame_seq = frame.seq;
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [frame.width as usize, frame.height as usize],
+            &frame.rgba,
+        );
+        // Riuso la texture: ricrearla a ogni fotogramma (15 al secondo)
+        // butterebbe via memoria e sincronizzazione con la GPU.
+        if self.call_tex.is_some() {
+            if let Some(texture) = self.call_tex.as_mut() {
+                texture.set(image, egui::TextureOptions::LINEAR);
+            }
+        } else {
+            self.call_tex =
+                Some(ctx.load_texture("call-video", image, egui::TextureOptions::LINEAR));
+        }
+        ctx.request_repaint();
+    }
 }
 
 impl eframe::App for App {
@@ -1824,37 +1855,6 @@ impl eframe::App for App {
         self.apply_actions();
         self.overlays(&ctx);
         self.toast_ui(&ctx);
-    }
-
-    /// Porta a schermo il fotogramma video più recente, se è cambiato.
-    fn poll_call_video(&mut self, ctx: &egui::Context) {
-        let in_video = self.call.as_ref().is_some_and(|call| call.video);
-        if !in_video {
-            if self.call_tex.is_some() {
-                self.call_tex = None;
-                self.call_frame_seq = 0;
-            }
-            return;
-        }
-        let Some(frame) = self.call_video.latest(self.call_frame_seq) else {
-            return;
-        };
-        self.call_frame_seq = frame.seq;
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [frame.width as usize, frame.height as usize],
-            &frame.rgba,
-        );
-        // Riuso la texture: ricrearla a ogni fotogramma (15 al secondo)
-        // butterebbe via memoria e sincronizzazione con la GPU.
-        if self.call_tex.is_some() {
-            if let Some(texture) = self.call_tex.as_mut() {
-                texture.set(image, egui::TextureOptions::LINEAR);
-            }
-        } else {
-            self.call_tex =
-                Some(ctx.load_texture("call-video", image, egui::TextureOptions::LINEAR));
-        }
-        ctx.request_repaint();
     }
 
     /// Chiusura pulita: la sessione salva chiavi e stato prima di sparire.

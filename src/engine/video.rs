@@ -12,7 +12,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -83,8 +83,8 @@ impl FrameSlot {
 /// decodificatore sotto controllo.
 pub struct VideoSession {
     pub slot: FrameSlot,
-    outgoing: Sender<Vec<u8>>,
-    incoming: Receiver<VideoFrame>,
+    outgoing: Receiver<Vec<u8>>,
+    incoming: Sender<VideoFrame>,
     /// Canale sorgente tenuto aperto quando non c'è fotocamera.
     idle_source: Option<Sender<Vec<u8>>>,
     encoder: Option<Child>,
@@ -111,13 +111,12 @@ impl VideoSession {
         let stdin = decoder.stdin.take();
         let stdout = decoder.stdout.take();
         let slot_rx = slot.clone();
-        thread::spawn(move || decode_loop(peer_rx, stdin, stdout, slot_rx));
+        thread::spawn(move || decode_loop(peer_rx.clone(), stdin, stdout, slot_rx));
 
         let camera_pid = Arc::new(AtomicU32::new(0));
         let running = Arc::new(AtomicBool::new(true));
         let mut encoder = None;
 
-        let mut idle_source = None;
         let camera = camera.filter(|path| !path.trim().is_empty() && Path::new(path).exists());
         match camera {
             Some(path) => match spawn_encoder(&path) {
@@ -125,22 +124,18 @@ impl VideoSession {
                     camera_pid.store(child.id(), Ordering::Relaxed);
                     if let Some(stdout) = child.stdout.take() {
                         let running = running.clone();
+                        let frames_tx = frames_tx.clone();
                         thread::spawn(move || encode_loop(stdout, frames_tx, running));
                     }
                     encoder = Some(child);
                 }
-                Err(err) => {
-                    log::warn!("fotocamera {path}: {err}");
-                    idle_source = Some(frames_tx);
-                }
+                Err(err) => log::warn!("fotocamera {path}: {err}"),
             },
-            None => {
-                // Nessuna fotocamera: il canale resta aperto ma vuoto, così la
-                // libreria non chiude il piano video.
-                idle_source = Some(frames_tx);
-                log::info!("nessuna fotocamera: videochiamata in sola ricezione");
-            }
+            None => log::info!("nessuna fotocamera: videochiamata in sola ricezione"),
         }
+        // Il sender resta vivo per tutta la sessione: se sparisse, il piano
+        // video si chiuderebbe e la libreria smetterebbe di leggere.
+        let idle_source = Some(frames_tx);
 
         Ok(Self {
             slot,
@@ -222,10 +217,10 @@ fn decoder_command() -> Command {
         "rawvideo",
         "pipe:1",
     ]);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::null());
     command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
 }
 
 /// Prova completa senza fotocamera né rete: genera un video con ffmpeg

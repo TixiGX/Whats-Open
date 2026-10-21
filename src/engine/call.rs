@@ -519,8 +519,8 @@ pub async fn accept(
         },
     );
 
-    let mut builder = client
-        .voip()
+    let voip = client.voip();
+    let mut builder = voip
         .accept(&incoming)
         .audio(audio.mic.clone(), audio.speaker.clone());
     if let Some(video) = media.as_ref() {
@@ -630,8 +630,8 @@ pub async fn start_outgoing(
         },
     );
 
-    let mut builder = client
-        .voip()
+    let voip = client.voip();
+    let mut builder = voip
         .call(&jid)
         .audio(audio.mic.clone(), audio.speaker.clone());
     if let Some(session) = media.as_ref() {
