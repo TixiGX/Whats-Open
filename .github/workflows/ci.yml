@@ -370,44 +370,43 @@ jobs:
           import -display :99 -window root smoke/light.png 2> smoke/light.err
           kill "$light" 2>/dev/null
 
-          shot=""
-          dshot=""
-          if [ -s smoke/shot.png ]; then
-            for width in 460 360 280 220; do
-              convert smoke/shot.png -resize "${width}x" -quality 35 smoke/shot.jpg 2>/dev/null \
-                || magick smoke/shot.png -resize "${width}x" -quality 35 smoke/shot.jpg 2>/dev/null
-              [ -s smoke/shot.jpg ] && [ "$(wc -c < smoke/shot.jpg)" -lt 42000 ] && break
+          # Un commento per immagine: GitHub tronca i commenti a 64 KB, e con
+          # quattro immagini nello stesso testo resterebbero miniature illeggibili.
+          post_image () {
+            tag="$1"
+            png="$2"
+            [ -s "$png" ] || return 0
+            for width in 1000 820 680 560; do
+              convert "$png" -resize "${width}x" -quality 60 smoke/out.jpg 2>/dev/null \
+                || magick "$png" -resize "${width}x" -quality 60 smoke/out.jpg 2>/dev/null
+              [ -s smoke/out.jpg ] && [ "$(wc -c < smoke/out.jpg)" -lt 43000 ] && break
             done
-            if [ -s smoke/shot.jpg ]; then
-              echo "screenshot: $(wc -c < smoke/shot.jpg) byte ($width px)" >> smoke.log
-              shot=$(base64 -w0 smoke/shot.jpg)
-            fi
-          else
-            echo "nessuno screenshot" >> smoke.log
-            tail -3 smoke/shot.err >> smoke.log
-          fi
-          if [ -s smoke/demo.png ]; then
-            for width in 460 360 280 220; do
-              convert smoke/demo.png -resize "${width}x" -quality 35 smoke/demo.jpg 2>/dev/null \
-                || magick smoke/demo.png -resize "${width}x" -quality 35 smoke/demo.jpg 2>/dev/null
-              [ -s smoke/demo.jpg ] && [ "$(wc -c < smoke/demo.jpg)" -lt 42000 ] && break
-            done
-            if [ -s smoke/demo.jpg ]; then
-              echo "demo: $(wc -c < smoke/demo.jpg) byte ($width px)" >> smoke.log
-              dshot=$(base64 -w0 smoke/demo.jpg)
-            fi
-          else
-            echo "nessuno screenshot della demo" >> smoke.log
-            tail -3 smoke/demo.err >> smoke.log
-          fi
+            [ -s smoke/out.jpg ] || return 0
+            echo "$tag: $(wc -c < smoke/out.jpg) byte ($width px)" >> smoke.log
+            {
+              echo "$tag"
+              echo
+              echo '```'
+              base64 -w0 smoke/out.jpg
+              echo
+              echo '```'
+            } > "smoke/$tag.md"
+            jq -Rs '{body: .}' "smoke/$tag.md" > "smoke/$tag.json"
+            gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+              --input "smoke/$tag.json" > /dev/null 2>&1 || true
+          }
+          post_image SCREENSHOT_B64 smoke/shot.png
+          post_image DEMO_B64 smoke/demo.png
+          post_image NARROW_B64 smoke/narrow.png
+          post_image LIGHT_B64 smoke/light.png
+
           cat smoke.log
           grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
           grep -qi "panicked" smoke.log && echo "::error::panic all'avvio"
+          video_failed=0
           if [ "${video_ok:-0}" != "1" ]; then
             echo "::error::--video-check non è passato: il percorso video delle chiamate è rotto"
             video_failed=1
-          else
-            video_failed=0
           fi
           if [ "${audio_ok:-0}" != "1" ]; then
             echo "::error::--audio-check non è passato: microfono, casse o silenzio di riserva non funzionano"
@@ -419,20 +418,6 @@ jobs:
             echo '```'
             tail -c 20000 smoke.log
             echo '```'
-            if [ -n "$shot" ]; then
-              echo
-              echo "SCREENSHOT_B64"
-              echo '```'
-              echo "$shot"
-              echo '```'
-            fi
-            if [ -n "$dshot" ]; then
-              echo
-              echo "DEMO_B64"
-              echo '```'
-              echo "$dshot"
-              echo '```'
-            fi
           } > comment.md
           jq -Rs '{body: .}' comment.md > smoke.json
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \

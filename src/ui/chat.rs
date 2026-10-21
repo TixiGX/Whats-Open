@@ -342,6 +342,19 @@ impl App {
             Kind::Location | Kind::Contact => width = width.max(196.0),
             _ => {}
         }
+        if bubble.view_once {
+            // La piastrella "apri una volta" ha una misura fissa: il fumetto
+            // deve contenerla, non schiacciarla.
+            width = if bubble.played {
+                width.max(150.0)
+            } else if matches!(bubble.kind, Kind::Image | Kind::Video | Kind::Gif)
+                && self.thumb_texture(index).is_some()
+            {
+                width.max(252.0)
+            } else {
+                width.max(226.0)
+            };
+        }
         if let Some(quote) = bubble.quote.as_ref() {
             let quoted = measure_text(ui, &util::truncate(&quote.text, 70), 11.0, (room - 16.0).max(60.0));
             width = width.max(quoted + 16.0);

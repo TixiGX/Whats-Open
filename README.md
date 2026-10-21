@@ -141,8 +141,16 @@ Per compilare servono anche gli header di sviluppo (`libasound2-dev`,
 whats-open                    # accesso con QR
 whats-open --pair 3933...     # accesso con codice a 8 caratteri
 whats-open --doctor           # ambiente, dipendenze e percorsi
+whats-open --audio-check      # microfono, casse o silenzio di riserva
+whats-open --video-check      # percorso H.264 delle videochiamate
+whats-open --theme chiaro     # forza il tema (auto | chiaro | scuro)
 whats-open --help
 ```
+
+Il tema segue il desktop: si leggono `GTK_THEME`, le preferenze GNOME
+(`color-scheme`/`gtk-theme`), `gtk-3.0|4.0/settings.ini` e `kdeglobals`. La
+tavolozza resta monocromatica — cambia la luminosità, non i colori — e in
+Impostazioni si può forzare chiaro o scuro.
 
 Dati locali:
 
@@ -164,7 +172,9 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 {
   "system_player": false,   // true: audio/video col player di sistema
   "system_fonts": true,     // font di sistema come riserva (emoji, CJK, arabo)
-  "graceful_exit": true     // chiude la sessione in modo pulito all'uscita
+  "graceful_exit": true,    // chiude la sessione in modo pulito all'uscita
+  "camera": "/dev/video0",  // fotocamera per le videochiamate
+  "theme": "auto"           // auto | light | dark
 }
 ```
 
@@ -177,6 +187,8 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 | `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
 | `RUST_LOG=debug` | log più verboso |
 | `WHATS_OPEN_DEMO=1` | apre l'interfaccia con conversazioni di prova, senza account e senza rete (l'invio è disattivato) |
+| `WHATS_OPEN_THEME=light|dark` | forza il tema chiaro o scuro |
+| `WHATS_OPEN_WINDOW=560x430` | dimensione iniziale della finestra |
 
 ## Se qualcosa non funziona
 
