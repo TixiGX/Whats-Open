@@ -350,9 +350,10 @@ impl App {
             } else if matches!(bubble.kind, Kind::Image | Kind::Video | Kind::Gif)
                 && self.thumb_texture(index).is_some()
             {
-                width.max(252.0)
+                // La miniatura è larga 252 più i margini interni del fumetto.
+                width.max(276.0)
             } else {
-                width.max(226.0)
+                width.max(246.0)
             };
         }
         if let Some(quote) = bubble.quote.as_ref() {
@@ -401,89 +402,94 @@ impl App {
                     Some(width) => ui.set_width(width),
                     None => ui.set_max_width(max_width - 22.0),
                 }
+                // Dentro il fumetto si va per righe: senza questo il layout
+                // orizzontale del genitore metterebbe citazione e testo uno
+                // accanto all'altro invece che uno sotto l'altro.
+                ui.vertical(|ui| {
 
-                if !bubble.own && self.messages[index].chat_id.ends_with("@g.us") {
-                    let name = self.name_of(&bubble.sender);
-                    ui.label(RichText::new(name).size(11.0).color(muted));
-                    ui.add_space(2.0);
-                }
+                    if !bubble.own && self.messages[index].chat_id.ends_with("@g.us") {
+                        let name = self.name_of(&bubble.sender);
+                        ui.label(RichText::new(name).size(11.0).color(muted));
+                        ui.add_space(2.0);
+                    }
 
-                if let Some(quote) = bubble.quote.as_ref() {
-                    egui::Frame::new()
-                        .fill(if bubble.own {
-                            crate::theme::mix(pal().own_bubble, pal().own_text, 0.10)
-                        } else {
-                            crate::theme::mix(pal().in_bubble, pal().in_text, 0.08)
-                        })
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(8, 5))
-                        .show(ui, |ui| {
-                            ui.set_max_width(max_width - 40.0);
-                            let who = if quote.sender.is_empty() {
-                                String::new()
+                    if let Some(quote) = bubble.quote.as_ref() {
+                        egui::Frame::new()
+                            .fill(if bubble.own {
+                                crate::theme::mix(pal().own_bubble, pal().own_text, 0.10)
                             } else {
-                                self.name_of(&quote.sender)
-                            };
-                            if !who.is_empty() {
+                                crate::theme::mix(pal().in_bubble, pal().in_text, 0.08)
+                            })
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(8, 5))
+                            .show(ui, |ui| {
+                                ui.set_max_width(max_width - 40.0);
+                                let who = if quote.sender.is_empty() {
+                                    String::new()
+                                } else {
+                                    self.name_of(&quote.sender)
+                                };
+                                if !who.is_empty() {
+                                    ui.label(
+                                        RichText::new(who)
+                                            .size(10.5)
+                                            .strong()
+                                            .color(if bubble.own {
+                                                pal().own_text
+                                            } else {
+                                                pal().text
+                                            }),
+                                    );
+                                }
                                 ui.label(
-                                    RichText::new(who)
-                                        .size(10.5)
-                                        .strong()
+                                    RichText::new(util::truncate(&quote.text, 70))
+                                        .size(11.0)
                                         .color(if bubble.own {
-                                            pal().own_text
+                                            crate::theme::mix(pal().own_text, pal().own_bubble, 0.30)
                                         } else {
-                                            pal().text
+                                            pal().muted
                                         }),
                                 );
-                            }
-                            ui.label(
-                                RichText::new(util::truncate(&quote.text, 70))
-                                    .size(11.0)
-                                    .color(if bubble.own {
-                                        crate::theme::mix(pal().own_text, pal().own_bubble, 0.30)
-                                    } else {
-                                        pal().muted
-                                    }),
-                            );
-                        });
-                    ui.add_space(3.0);
-                }
+                            });
+                        ui.add_space(3.0);
+                    }
 
-                if bubble.deleted {
-                    ui.label(
-                        RichText::new("Questo messaggio è stato eliminato")
-                            .italics()
-                            .size(13.0)
-                            .color(muted),
-                    );
-                } else {
-                    self.content_ui(ui, index, bubble, text_color, muted, faint);
-                }
-
-                ui.add_space(2.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if bubble.own {
-                        let (rect, _) =
-                            ui.allocate_exact_size(Vec2::new(15.0, 10.0), Sense::hover());
-                        crate::icons::ticks(
-                            ui,
-                            rect,
-                            bubble.status,
-                            if matches!(bubble.status, Status::Read | Status::Played) {
-                                text_color
-                            } else {
-                                muted
-                            },
+                    if bubble.deleted {
+                        ui.label(
+                            RichText::new("Questo messaggio è stato eliminato")
+                                .italics()
+                                .size(13.0)
+                                .color(muted),
                         );
+                    } else {
+                        self.content_ui(ui, index, bubble, text_color, muted, faint);
                     }
-                    if bubble.edited {
-                        ui.label(RichText::new("modificato").size(9.5).color(muted));
-                    }
-                    ui.label(
-                        RichText::new(util::fmt_clock(bubble.ts))
-                            .size(9.5)
-                            .color(muted),
-                    );
+
+                    ui.add_space(2.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if bubble.own {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(15.0, 10.0), Sense::hover());
+                            crate::icons::ticks(
+                                ui,
+                                rect,
+                                bubble.status,
+                                if matches!(bubble.status, Status::Read | Status::Played) {
+                                    text_color
+                                } else {
+                                    muted
+                                },
+                            );
+                        }
+                        if bubble.edited {
+                            ui.label(RichText::new("modificato").size(9.5).color(muted));
+                        }
+                        ui.label(
+                            RichText::new(util::fmt_clock(bubble.ts))
+                                .size(9.5)
+                                .color(muted),
+                        );
+                    });
                 });
             })
             .response;
