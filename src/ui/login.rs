@@ -154,6 +154,17 @@ impl App {
                 .size(11.0)
                 .color(Palette::FAINT),
         );
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                "L'app si presenta come WhatsApp Web (Linux). Se il telefono \
+                 dice «Impossibile collegare il dispositivo», aggiorna WhatsApp, \
+                 libera uno dei dispositivi collegati e riprova: il codice in \
+                 schermo deve essere inquadrato subito.",
+            )
+            .size(11.0)
+            .color(Palette::MUTED),
+        );
     }
 
     fn pair_card(&mut self, ui: &mut egui::Ui) {

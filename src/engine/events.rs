@@ -26,9 +26,8 @@ pub async fn handle(
                 learn_from_info(&sink, inbound.info.as_ref());
                 match extract::extract(inbound.message.as_ref(), inbound.info.as_ref()) {
                     Extracted::New(message) => {
-                        if message.kind == crate::model::Kind::Other && message.text.is_empty() {
-                            continue;
-                        }
+                        // Anche i tipi che non sappiamo disegnare restano in
+                        // chat: sparire è peggio di una riga "non supportato".
                         ensure_group_name(&client, &sink, &groups, &message.chat_id);
                         out.push(message);
                     }

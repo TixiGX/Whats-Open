@@ -17,6 +17,8 @@ pub struct Config {
     pub system_fonts: bool,
     /// Chiudere la finestra scollega la sessione in modo pulito.
     pub graceful_exit: bool,
+    /// Dispositivo della fotocamera per le videochiamate (`/dev/video0`).
+    pub camera: String,
 }
 
 impl Default for Config {
@@ -25,6 +27,7 @@ impl Default for Config {
             system_player: false,
             system_fonts: true,
             graceful_exit: true,
+            camera: "/dev/video0".to_string(),
         }
     }
 }

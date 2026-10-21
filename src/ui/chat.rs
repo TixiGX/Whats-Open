@@ -126,17 +126,20 @@ impl App {
             self.request_avatar(&chat.id);
         }
         let in_call = self.call.is_some();
-        let mut place_call = false;
+        let narrow = self.narrow;
+        // `Some(true)` = videochiamata, `Some(false)` = vocale.
+        let mut place_call: Option<bool> = None;
 
         egui::Frame::new()
             .fill(Palette::PANEL)
-            .inner_margin(egui::Margin::symmetric(10, 8))
+            .inner_margin(egui::Margin::symmetric(10, 7))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if crate::icons::Icon::Back
-                        .button(ui, 30.0, Palette::MUTED)
-                        .on_hover_text("Torna alle chat")
-                        .clicked()
+                    if narrow
+                        && crate::icons::Icon::Back
+                            .button(ui, 30.0, Palette::TEXT)
+                            .on_hover_text("Torna alle chat")
+                            .clicked()
                     {
                         self.selected = None;
                         self.messages.clear();
@@ -144,7 +147,7 @@ impl App {
                         self.reply_label.clear();
                     }
 
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
                     widgets::avatar_tex(
                         ui,
                         rect,
@@ -155,21 +158,18 @@ impl App {
                         chat.online,
                     );
 
-                    ui.add_space(2.0);
+                    ui.add_space(5.0);
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new(&title)
-                                .size(14.0)
+                                .size(15.0)
+                                .strong()
                                 .color(Palette::TEXT),
                         );
                         let mut subtitle = if chat.typing {
                             "sta scrivendo…".to_string()
                         } else if chat.is_group {
-                            if chat.online {
-                                "Gruppo · attivo".to_string()
-                            } else {
-                                "Gruppo".to_string()
-                            }
+                            "Gruppo".to_string()
                         } else if chat.online {
                             "online".to_string()
                         } else if let Some(ts) = chat.last_seen {
@@ -177,8 +177,7 @@ impl App {
                         } else {
                             String::new()
                         };
-                        // Il numero accanto al nome aiuta a riconoscere chi
-                        // non è ancora in rubrica (o è salvato con un altro nome).
+                        // Il numero aiuta a riconoscere chi non è in rubrica.
                         let line = phone_line(&chat.id);
                         if !chat.is_group && !line.is_empty() && title != line {
                             if subtitle.is_empty() {
@@ -187,23 +186,38 @@ impl App {
                                 subtitle = format!("{subtitle} · {line}");
                             }
                         }
-                        ui.label(
-                            RichText::new(subtitle)
-                                .size(11.0)
-                                .color(if chat.typing {
-                                    Palette::TEXT
-                                } else {
-                                    Palette::MUTED
-                                }),
-                        );
+                        if !subtitle.is_empty() {
+                            ui.label(
+                                RichText::new(util::truncate(&subtitle, 58))
+                                    .size(11.0)
+                                    .color(if chat.typing {
+                                        Palette::TEXT
+                                    } else {
+                                        Palette::MUTED
+                                    }),
+                            );
+                        }
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let color = if chat.is_group || in_call {
-                            Palette::FAINT
+                        ui.add_space(2.0);
+                        let enabled = !chat.is_group && !in_call;
+                        let color = if enabled { Palette::TEXT } else { Palette::FAINT };
+                        let hover = if chat.is_group {
+                            "Le chiamate di gruppo non sono supportate"
+                        } else if in_call {
+                            "Chiamata in corso"
                         } else {
-                            Palette::MUTED
+                            "Videochiamata"
                         };
+                        if crate::icons::Icon::Video
+                            .button(ui, 32.0, color)
+                            .on_hover_text(hover)
+                            .clicked()
+                            && enabled
+                        {
+                            place_call = Some(true);
+                        }
                         let hover = if chat.is_group {
                             "Le chiamate di gruppo non sono supportate"
                         } else if in_call {
@@ -211,22 +225,24 @@ impl App {
                         } else {
                             "Chiamata vocale"
                         };
-                        let response = crate::icons::Icon::Phone
-                            .button(ui, 30.0, color)
-                            .on_hover_text(hover);
-                        if response.clicked() && !chat.is_group && !in_call {
-                            place_call = true;
+                        if crate::icons::Icon::Phone
+                            .button(ui, 32.0, color)
+                            .on_hover_text(hover)
+                            .clicked()
+                            && enabled
+                        {
+                            place_call = Some(false);
                         }
                     });
                 });
             });
         ui.separator();
 
-        if place_call {
+        if let Some(video) = place_call {
             if chat.is_group {
                 self.note("Le chiamate di gruppo non sono supportate");
             } else {
-                self.start_call();
+                self.start_call(video);
             }
         }
     }
@@ -271,6 +287,12 @@ impl App {
     }
 
     fn bubble_ui(&mut self, ui: &mut egui::Ui, index: usize) {
+        // Le chiamate non sono fumetti: una pastiglia centrata, come su
+        // WhatsApp, con l'icona della cornetta e la durata.
+        if self.messages[index].kind == Kind::System && is_call_note(&self.messages[index].text) {
+            call_note(ui, &self.messages[index].text, self.messages[index].ts);
+            return;
+        }
         let bubble = Bubble::from(&self.messages[index]);
         let max_width = (ui.available_width() * 0.76).clamp(170.0, 560.0);
 
@@ -723,6 +745,11 @@ impl App {
                     .size(13.0)
                     .color(text_color),
                 );
+            }
+            _ if bubble.view_once && !bubble.played => {
+                if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                    self.actions.push(Action::RevealOnce(index));
+                }
             }
             _ => {
                 if !bubble.text.is_empty() {
@@ -1240,6 +1267,36 @@ impl App {
         self.gfx.insert(&ctx, key.clone(), image, false);
         self.gfx.get(&key)
     }
+}
+
+fn is_call_note(text: &str) -> bool {
+    text.starts_with("Chiamata") || text.starts_with("Videochiamata")
+}
+
+fn call_note(ui: &mut egui::Ui, text: &str, ts: i64) {
+    ui.add_space(4.0);
+    let label = format!("{} · {}", util::truncate(text, 52), util::fmt_clock(ts));
+    let galley = ui.painter().layout_no_wrap(
+        label,
+        egui::FontId::proportional(11.0),
+        Palette::MUTED,
+    );
+    let width = (galley.size().x + 42.0).min(ui.available_width() - 20.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
+    let plate = egui::Rect::from_center_size(rect.center(), Vec2::new(width, 22.0));
+    ui.painter()
+        .rect_filled(plate, egui::CornerRadius::same(11), Palette::SURFACE);
+    let icon = egui::Rect::from_center_size(
+        egui::Pos2::new(plate.left() + 14.0, plate.center().y),
+        Vec2::splat(13.0),
+    );
+    crate::icons::Icon::Phone.paint(ui, icon, Palette::MUTED);
+    ui.painter().galley(
+        egui::Pos2::new(icon.right() + 7.0, plate.center().y - galley.size().y * 0.5),
+        galley,
+        Palette::MUTED,
+    );
+    ui.add_space(4.0);
 }
 
 /// Numero leggibile di un JID, quando il JID è un numero.

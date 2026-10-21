@@ -476,9 +476,14 @@ impl App {
         let phase = call.phase;
         let peer = call.peer.clone();
         let muted = call.muted;
+        let camera_on = call.camera_on;
         let since = call.since;
         let video = call.video;
-        ctx.request_repaint_after(Duration::from_millis(500));
+        ctx.request_repaint_after(if video {
+            Duration::from_millis(40)
+        } else {
+            Duration::from_millis(500)
+        });
 
         let title = if peer.is_empty() {
             "Chiamata".to_string()
@@ -488,18 +493,22 @@ impl App {
         let status = match phase {
             CallPhase::Ringing => {
                 if video {
-                    // Il video non è ancora supportato: si risponde in audio,
-                    // e lo si dice prima di accettare.
-                    "Videochiamata · risponderai in audio"
+                    "Videochiamata in arrivo"
                 } else {
-                    "Chiamata in arrivo…"
+                    "Chiamata in arrivo"
                 }
             }
-            CallPhase::Dialing => "Sto chiamando…",
+            CallPhase::Dialing => {
+                if video {
+                    "Videochiamata in corso…"
+                } else {
+                    "Sto chiamando…"
+                }
+            }
             CallPhase::Connecting => "Connessione…",
             CallPhase::Active => {
                 if video {
-                    "In chiamata · audio"
+                    "In videochiamata"
                 } else {
                     "In chiamata"
                 }
@@ -507,13 +516,15 @@ impl App {
             CallPhase::Ended => "Terminata",
         };
         let elapsed = since.elapsed().as_secs();
-        // La foto del contatto rende il pannello riconoscibile a colpo d'occhio.
         let avatar = self.avatars.get(&peer).cloned();
+        let texture = self.call_tex.clone();
 
-        let mut accept = false;
+        let mut accept_audio = false;
+        let mut accept_video = false;
         let mut reject = false;
         let mut hangup = false;
         let mut toggle_mute = false;
+        let mut toggle_camera = false;
 
         egui::Area::new(egui::Id::new("call-panel"))
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 14.0))
@@ -522,9 +533,55 @@ impl App {
                 egui::Frame::new()
                     .fill(Palette::SURFACE)
                     .stroke(egui::Stroke::new(1.0, Palette::BORDER))
-                    .corner_radius(egui::CornerRadius::same(12))
+                    .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(16, 12))
                     .show(ui, |ui| {
+                        ui.set_max_width(360.0);
+
+                        if video && phase != CallPhase::Ringing {
+                            let (rect, _) = ui.allocate_exact_size(
+                                Vec2::new(320.0, 180.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter()
+                                .rect_filled(rect, egui::CornerRadius::same(10), Palette::BG);
+                            match texture.as_ref() {
+                                Some(texture) => {
+                                    let _ = ui.put(
+                                        rect,
+                                        egui::Image::new(egui::load::SizedTexture::new(
+                                            texture.id(),
+                                            rect.size(),
+                                        ))
+                                        .corner_radius(egui::CornerRadius::same(10)),
+                                    );
+                                }
+                                None => {
+                                    ui.painter().text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        if phase == CallPhase::Active {
+                                            "In attesa del video…"
+                                        } else {
+                                            "Video in arrivo…"
+                                        },
+                                        egui::FontId::proportional(11.5),
+                                        Palette::FAINT,
+                                    );
+                                }
+                            }
+                            if !camera_on {
+                                ui.painter().text(
+                                    egui::Pos2::new(rect.left() + 10.0, rect.bottom() - 12.0),
+                                    egui::Align2::LEFT_CENTER,
+                                    "fotocamera spenta",
+                                    egui::FontId::proportional(10.0),
+                                    Color32::WHITE,
+                                );
+                            }
+                            ui.add_space(10.0);
+                        }
+
                         ui.horizontal(|ui| {
                             let (rect, _) =
                                 ui.allocate_exact_size(Vec2::splat(34.0), egui::Sense::hover());
@@ -539,7 +596,7 @@ impl App {
                             );
                             ui.add_space(6.0);
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(&title).size(13.0).color(Palette::TEXT));
+                                ui.label(RichText::new(&title).size(13.5).color(Palette::TEXT));
                                 let line = if phase == CallPhase::Active {
                                     format!(
                                         "{status} · {}",
@@ -550,18 +607,28 @@ impl App {
                                 };
                                 ui.label(RichText::new(line).size(11.0).color(Palette::MUTED));
                             });
-                            ui.add_space(18.0);
+                        });
 
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
                             if phase == CallPhase::Ringing {
                                 if crate::icons::Icon::Phone
-                                    .button(ui, 32.0, Palette::WHITE)
+                                    .button(ui, 34.0, Palette::WHITE)
                                     .on_hover_text("Rispondi")
                                     .clicked()
                                 {
-                                    accept = true;
+                                    accept_audio = true;
+                                }
+                                if video
+                                    && crate::icons::Icon::Video
+                                        .button(ui, 34.0, Palette::WHITE)
+                                        .on_hover_text("Rispondi in video")
+                                        .clicked()
+                                {
+                                    accept_video = true;
                                 }
                                 if crate::icons::Icon::PhoneOff
-                                    .button(ui, 32.0, Palette::DANGER)
+                                    .button(ui, 34.0, Palette::DANGER)
                                     .on_hover_text("Rifiuta")
                                     .clicked()
                                 {
@@ -577,7 +644,7 @@ impl App {
                                     if icon
                                         .button(
                                             ui,
-                                            32.0,
+                                            34.0,
                                             if muted { Palette::FAINT } else { Palette::TEXT },
                                         )
                                         .on_hover_text(if muted {
@@ -589,9 +656,35 @@ impl App {
                                     {
                                         toggle_mute = true;
                                     }
+                                    if video {
+                                        let icon = if camera_on {
+                                            crate::icons::Icon::Video
+                                        } else {
+                                            crate::icons::Icon::VideoOff
+                                        };
+                                        if icon
+                                            .button(
+                                                ui,
+                                                34.0,
+                                                if camera_on {
+                                                    Palette::TEXT
+                                                } else {
+                                                    Palette::FAINT
+                                                },
+                                            )
+                                            .on_hover_text(if camera_on {
+                                                "Spegni la fotocamera"
+                                            } else {
+                                                "Accendi la fotocamera"
+                                            })
+                                            .clicked()
+                                        {
+                                            toggle_camera = true;
+                                        }
+                                    }
                                 }
                                 if crate::icons::Icon::PhoneOff
-                                    .button(ui, 32.0, Palette::DANGER)
+                                    .button(ui, 34.0, Palette::DANGER)
                                     .on_hover_text("Chiudi")
                                     .clicked()
                                 {
@@ -610,9 +703,20 @@ impl App {
                 engine.send(Cmd::CallMute { muted: !muted });
             }
         }
-        if accept {
+        if toggle_camera {
+            let on = !camera_on;
+            if let Some(call) = self.call.as_mut() {
+                call.camera_on = on;
+            }
             if let Some(engine) = self.engine.as_ref() {
-                engine.send(Cmd::CallAccept);
+                engine.send(Cmd::CallCamera { on });
+            }
+        }
+        if accept_audio || accept_video {
+            if let Some(engine) = self.engine.as_ref() {
+                engine.send(Cmd::CallAccept {
+                    video: accept_video && video,
+                });
             }
             if let Some(call) = self.call.as_mut() {
                 call.phase = CallPhase::Connecting;
@@ -628,7 +732,6 @@ impl App {
             if let Some(engine) = self.engine.as_ref() {
                 engine.send(Cmd::CallHangup);
             }
-            self.call = None;
         }
     }
 
@@ -998,6 +1101,15 @@ impl App {
                                 n => format!("{n} nomi recuperati"),
                             });
                         }
+                        if ui
+                            .small_button("Importa .vcf")
+                            .on_hover_text(
+                                "Usa la rubrica esportata dal telefono (Impostazioni → Esporta contatti)",
+                            )
+                            .clicked()
+                        {
+                            self.import_vcard();
+                        }
                     });
 
                     ui.add_space(8.0);
@@ -1015,6 +1127,37 @@ impl App {
                         .size(12.0)
                         .color(Palette::MUTED),
                     );
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Fotocamera")
+                                .size(12.0)
+                                .color(Palette::MUTED),
+                        );
+                        let mut camera = self.config.camera.clone();
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut camera)
+                                    .desired_width(150.0)
+                                    .hint_text("/dev/video0"),
+                            )
+                            .changed()
+                        {
+                            self.config.camera = camera;
+                            self.config.save(&self.paths.data);
+                        }
+                        let present = std::path::Path::new(&self.config.camera).exists();
+                        ui.label(
+                            RichText::new(if present {
+                                "trovata"
+                            } else {
+                                "non trovata: video in sola ricezione"
+                            })
+                            .size(10.5)
+                            .color(if present { Palette::MUTED } else { Palette::FAINT }),
+                        );
+                    });
 
                     let mut system_player = self.config.system_player;
                     if ui

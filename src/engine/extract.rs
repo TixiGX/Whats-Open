@@ -288,6 +288,7 @@ pub fn build(
     }
 
     out.kind = Kind::Other;
+    out.text = "Contenuto non supportato".to_string();
     out
 }
 

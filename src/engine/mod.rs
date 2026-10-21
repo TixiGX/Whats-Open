@@ -7,6 +7,7 @@
 pub mod call;
 pub mod events;
 pub mod extract;
+pub mod video;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -19,6 +20,8 @@ use whatsapp_rust::download::MediaType;
 use whatsapp_rust::http::{HttpClient, HttpRequest, UreqHttpClient};
 use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::wacore::store::DevicePropsOverride;
+use whatsapp_rust::waproto::whatsapp::device_props::PlatformType;
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::waproto::codec;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -78,8 +81,15 @@ pub enum Cmd {
     /// Chiamata vocale in uscita.
     CallStart {
         chat: String,
+        video: bool,
     },
-    CallAccept,
+    CallAccept {
+        video: bool,
+    },
+    /// Accende o spegne la fotocamera della videochiamata in corso.
+    CallCamera {
+        on: bool,
+    },
     CallReject,
     CallHangup,
     CallMute {
@@ -194,6 +204,8 @@ impl Engine {
         paths: Paths,
         pair_phone: Option<String>,
         wake: Option<Box<dyn Fn() + Send + Sync>>,
+        video_slot: video::FrameSlot,
+        camera: String,
     ) -> Self {
         let (cmd_tx, cmd_rx) = unbounded_channel::<Cmd>();
         let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
@@ -202,7 +214,7 @@ impl Engine {
         let join = std::thread::Builder::new()
             .name("whats-open-engine".into())
             .spawn(move || {
-                run(paths, pair_phone, cmd_rx, event_tx, wake);
+                run(paths, pair_phone, cmd_rx, event_tx, wake, video_slot, camera);
             })
             .ok();
 
@@ -249,6 +261,8 @@ fn run(
     cmd_rx: UnboundedReceiver<Cmd>,
     event_tx: std::sync::mpsc::Sender<Event>,
     wake: Option<Wake>,
+    video_slot: video::FrameSlot,
+    camera: String,
 ) {
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -296,8 +310,17 @@ fn run(
         // anche se la connessione cade e torna.
         let presence_task = Arc::new(AtomicBool::new(false));
 
+        // Identità presentata al momento del collegamento. Con i valori
+        // predefiniti la libreria si annuncia come "dispositivo sconosciuto"
+        // (tipo client 9) e il telefono rifiuta l'accoppiamento con
+        // "Impossibile collegare il dispositivo": presentarsi come WhatsApp
+        // Web su Linux (tipo client 1) è ciò che il server accetta.
+        let device_props = DevicePropsOverride::new()
+            .with_os("Linux")
+            .with_platform_type(PlatformType::CHROME);
         let mut builder = Bot::builder()
             .with_backend(store)
+            .with_device_props(device_props)
             .with_event_delivery(EventDelivery::Ordered { capacity: 1024 })
             .on_qr_code(move |code: String, _timeout: Duration| {
                 let sink = qr_sink.clone();
@@ -400,7 +423,15 @@ fn run(
         let command_sink = sink.clone();
         let command_calls = call_state.clone();
         let command_task = tokio::spawn(async move {
-            command_loop(command_client, cmd_rx, command_sink, command_calls).await;
+            command_loop(
+                command_client,
+                cmd_rx,
+                command_sink,
+                command_calls,
+                video_slot,
+                camera,
+            )
+            .await;
         });
 
         // Il bot gira finché la sessione resta viva; alla disconnessione
@@ -415,6 +446,8 @@ async fn command_loop(
     mut rx: UnboundedReceiver<Cmd>,
     sink: EventSink,
     calls: call::SharedCall,
+    video_slot: video::FrameSlot,
+    camera: String,
 ) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
@@ -572,20 +605,30 @@ async fn command_loop(
                     emit(&sink, Event::Avatar { jid, bytes });
                 });
             }
-            Cmd::CallStart { chat } => {
+            Cmd::CallStart { chat, video } => {
                 let client = client.clone();
                 let sink = sink.clone();
                 let calls = calls.clone();
+                let slot = video_slot.clone();
+                let camera = camera.clone();
                 tokio::spawn(async move {
-                    call::start_outgoing(client, chat, calls, sink).await;
+                    call::start_outgoing(client, chat, video, camera, slot, calls, sink).await;
                 });
             }
-            Cmd::CallAccept => {
+            Cmd::CallAccept { video } => {
                 let client = client.clone();
                 let sink = sink.clone();
                 let calls = calls.clone();
+                let slot = video_slot.clone();
+                let camera = camera.clone();
                 tokio::spawn(async move {
-                    call::accept(client, calls, sink).await;
+                    call::accept(client, video, camera, slot, calls, sink).await;
+                });
+            }
+            Cmd::CallCamera { on } => {
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    call::set_camera(calls, on).await;
                 });
             }
             Cmd::CallReject => {

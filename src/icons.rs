@@ -21,6 +21,7 @@ pub enum Icon {
     Download,
     Image,
     Video,
+    VideoOff,
     Doc,
     Trash,
     Logout,
@@ -201,6 +202,23 @@ impl Icon {
                     ],
                     color,
                     Stroke::NONE,
+                ));
+            }
+            Icon::VideoOff => {
+                let r = Rect::from_min_max(map(rect, 3.0, 6.0), map(rect, 16.0, 18.0));
+                painter.rect_stroke(r, egui::CornerRadius::same(3), thin, StrokeKind::Inside);
+                painter.add(egui::Shape::line(
+                    vec![map(rect, 16.5, 10.5), map(rect, 21.0, 7.5)],
+                    thin,
+                ));
+                painter.add(egui::Shape::line(
+                    vec![map(rect, 16.5, 13.5), map(rect, 21.0, 16.5)],
+                    thin,
+                ));
+                // Sbarra diagonale: fotocamera spenta.
+                painter.add(egui::Shape::line(
+                    vec![map(rect, 4.0, 4.0), map(rect, 20.0, 20.0)],
+                    thin,
                 ));
             }
             Icon::Doc => {

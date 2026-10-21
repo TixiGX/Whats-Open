@@ -131,8 +131,6 @@ impl App {
                     let selected = self.selected.as_deref() == Some(chat.id.as_str());
                     let typing = chat.typing;
                     let texture = self.avatars.get(&chat.id).cloned();
-                    // Numero sotto il nome quando il nome non è il numero:
-                    // senza rubrica i contatti si riconoscono solo così.
                     let sub = secondary_line(&chat, &title);
                     if chat_row(ui, &chat, &title, &sub, texture.as_ref(), selected, typing)
                         .clicked()
@@ -191,7 +189,7 @@ fn chat_row(
     selected: bool,
     typing: bool,
 ) -> Response {
-    let height = 68.0;
+    let height = 66.0;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
 
@@ -199,6 +197,12 @@ fn chat_row(
         let painter = ui.painter();
         if selected {
             painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::SURFACE);
+            // Barretta verticale: dice dove siamo senza aggiungere colore.
+            painter.rect_filled(
+                Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
+                egui::CornerRadius::same(0),
+                Palette::TEXT,
+            );
         } else if response.hovered() {
             painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::PANEL);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -206,8 +210,8 @@ fn chat_row(
     }
 
     let avatar_rect = Rect::from_center_size(
-        Pos2::new(rect.left() + 37.0, rect.center().y),
-        Vec2::splat(46.0),
+        Pos2::new(rect.left() + 36.0, rect.center().y),
+        Vec2::splat(44.0),
     );
     widgets::avatar_tex(
         ui,
@@ -220,20 +224,20 @@ fn chat_row(
     );
 
     let painter = ui.painter();
-    let text_left = rect.left() + 68.0;
+    let text_left = rect.left() + 66.0;
     let name_color = if chat.unread > 0 {
         Palette::WHITE
     } else {
         Palette::TEXT
     };
     // Caratteri che entrano davvero: il pannello è ridimensionabile.
-    let room = (rect.right() - 62.0 - text_left).max(90.0);
-    let title = util::truncate(title, (room / 7.0) as usize);
+    let room = (rect.right() - 58.0 - text_left).max(90.0);
+    let title = util::truncate(title, (room / 7.2) as usize);
     painter.text(
-        Pos2::new(text_left, rect.center().y - 10.0),
+        Pos2::new(text_left, rect.center().y - 10.5),
         Align2::LEFT_CENTER,
         title,
-        FontId::proportional(14.0),
+        FontId::proportional(14.5),
         name_color,
     );
 
@@ -247,18 +251,18 @@ fn chat_row(
         chat.preview.clone()
     };
     let preview_color = if typing { Palette::TEXT } else { Palette::MUTED };
-    let preview = util::truncate(&preview, (room / 6.1) as usize);
+    let preview = util::truncate(&preview, (room / 5.9) as usize);
     painter.text(
         Pos2::new(text_left, rect.center().y + 11.0),
         Align2::LEFT_CENTER,
         preview,
-        FontId::proportional(12.0),
+        FontId::proportional(11.8),
         preview_color,
     );
 
     let right = rect.right() - 14.0;
     painter.text(
-        Pos2::new(right, rect.center().y - 12.0),
+        Pos2::new(right, rect.center().y - 11.5),
         Align2::RIGHT_CENTER,
         util::fmt_chat_time(chat.last_ts),
         FontId::proportional(10.5),

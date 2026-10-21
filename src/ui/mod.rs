@@ -87,6 +87,8 @@ pub struct CallUi {
     pub video: bool,
     pub since: Instant,
     pub muted: bool,
+    /// Fotocamera accesa (solo videochiamate).
+    pub camera_on: bool,
 }
 
 pub struct App {
@@ -131,6 +133,10 @@ pub struct App {
     pub avatar_budget: (Instant, u32),
     /// Chiamata in corso (squillo, composizione, attiva).
     pub call: Option<CallUi>,
+    /// Fotogramma più recente del video in arrivo e texture a schermo.
+    pub call_video: crate::engine::video::FrameSlot,
+    pub call_tex: Option<egui::TextureHandle>,
+    pub call_frame_seq: u64,
     pub gfx: Textures,
     pub pending: HashMap<u64, Pending>,
     pub next_req: u64,
@@ -166,6 +172,10 @@ pub struct App {
     pub toast: Option<Toast>,
     /// `WHATS_OPEN_DEMO=1`: conversazioni finte, motore spento.
     pub demo: bool,
+    /// Messaggi di tutte le chat finte, da cui si pesca quella aperta.
+    pub demo_pool: Vec<Message>,
+    /// Finestra stretta: la lista chat e la conversazione non stanno insieme.
+    pub narrow: bool,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
     pub started: Instant,
@@ -237,6 +247,9 @@ impl App {
             avatar_asked: std::collections::HashSet::new(),
             avatar_budget: (Instant::now(), 0),
             call: None,
+            call_video: crate::engine::video::FrameSlot::new(),
+            call_tex: None,
+            call_frame_seq: 0,
             gfx: Textures::default(),
             pending: HashMap::new(),
             next_req: 0,
@@ -264,6 +277,8 @@ impl App {
             focus_flag: None,
             toast: None,
             demo: false,
+            demo_pool: Vec::new(),
+            narrow: false,
             last_expiry: Instant::now(),
             scroll_bottom: false,
             started: Instant::now(),
@@ -280,6 +295,9 @@ impl App {
             app.merge_alias(&lid, &pn);
         }
         app.sort_chats();
+        // I nomi già in archivio vanno applicati alla lista prima del primo
+        // fotogramma: senza questo, dopo ogni avvio tornano i numeri.
+        app.refresh_names();
         if std::env::var_os("WHATS_OPEN_DEMO").is_some() {
             app.load_demo();
         } else {
@@ -315,6 +333,8 @@ impl App {
             self.paths.clone(),
             pair,
             Some(Box::new(wake)),
+            self.call_video.clone(),
+            self.config.camera.clone(),
         ));
     }
 
@@ -429,6 +449,83 @@ impl App {
             }
             self.store.set_contact_name(&twin, &name, rank).ok();
         }
+    }
+
+    /// Importa una rubrica esportata dal telefono (`.vcf`). È la via più
+    /// leggera per avere subito i nomi: nessuna rete, nessun permesso, un file
+    /// che l'utente sceglie. I numeri vengono confrontati sulle ultime cifre,
+    /// così `+39 333 …` e `333…` si incontrano.
+    pub fn import_vcard(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Rubrica", &["vcf", "vcard"])
+            .set_title("Scegli la rubrica esportata dal telefono")
+            .pick_file()
+        else {
+            return;
+        };
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                self.note(format!("Rubrica non leggibile: {error}"));
+                return;
+            }
+        };
+        let entries = util::parse_vcards(&text);
+        if entries.is_empty() {
+            self.note("Nessun contatto nel file scelto");
+            return;
+        }
+        let mut by_phone: HashMap<String, String> = HashMap::new();
+        for entry in &entries {
+            for phone in &entry.phones {
+                let key = util::phone_key(phone);
+                if key.len() >= 6 {
+                    by_phone.entry(key).or_insert_with(|| entry.name.clone());
+                }
+            }
+        }
+
+        let ids: Vec<String> = self
+            .chats
+            .iter()
+            .filter(|chat| !chat.is_group)
+            .map(|chat| chat.id.clone())
+            .collect();
+        let mut matched = 0usize;
+        for id in ids {
+            let canonical = self.canonical(&id);
+            let mut keys = vec![util::phone_key(&util::jid_user(&id))];
+            if canonical != id {
+                keys.push(util::phone_key(&util::jid_user(&canonical)));
+            }
+            if let Some(contact) = self.contacts.get(&canonical).or_else(|| self.contacts.get(&id))
+            {
+                if !contact.phone.is_empty() {
+                    keys.push(util::phone_key(&contact.phone));
+                }
+            }
+            let name = keys
+                .iter()
+                .filter(|key| key.len() >= 6)
+                .find_map(|key| by_phone.get(key))
+                .cloned();
+            let Some(name) = name else {
+                continue;
+            };
+            self.apply_contact_name(&id, &name, 3);
+            self.apply_contact_name(&canonical, &name, 3);
+            if let Some(index) = self.index.get(&id).copied() {
+                self.chats[index].name = name.clone();
+            }
+            self.store.set_chat_name(&id, &name).ok();
+            matched += 1;
+        }
+        self.sort_chats();
+        self.ctx.request_repaint();
+        self.note(format!(
+            "Rubrica: {matched} chat abbinate su {} contatti nel file",
+            entries.len()
+        ));
     }
 
     /// Rilegge i nomi dall'archivio locale (nessuna rete): serve all'avvio e
@@ -573,6 +670,14 @@ impl App {
         push("g2", &group, &luca, false, now - 840, Kind::Gif, "GIF", Status::Read, false, 0, None);
         push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua.", Status::Read, false, 0, None);
 
+        self.demo_pool = std::mem::take(&mut self.messages);
+        self.messages = self
+            .demo_pool
+            .iter()
+            .filter(|message| message.chat_id == anna)
+            .cloned()
+            .collect();
+
         let mut chats = vec![
             Chat {
                 id: anna.clone(),
@@ -601,6 +706,12 @@ impl App {
         chats.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
         self.chats = chats;
         self.selected = Some(anna);
+        self.messages = self
+            .demo_pool
+            .iter()
+            .filter(|message| message.chat_id == self.selected.clone().unwrap_or_default())
+            .cloned()
+            .collect();
         self.sort_chats();
         self.scroll_bottom = true;
     }
@@ -780,10 +891,38 @@ impl App {
     fn apply_call(&mut self, phase: crate::engine::CallPhase, peer: String, video: bool) {
         use crate::engine::CallPhase;
         if phase == CallPhase::Ended {
-            if self.call.is_some() {
+            if let Some(call) = self.call.take() {
+                let seconds = call.since.elapsed().as_secs() as u32;
+                let answered = matches!(call.phase, CallPhase::Active | CallPhase::Connecting)
+                    || (call.phase == CallPhase::Dialing && seconds >= 2);
+                let label = if call.video {
+                    "Videochiamata"
+                } else {
+                    "Chiamata"
+                };
+                let text = if answered {
+                    format!("{label} · {}", util::human_duration(seconds.max(1)))
+                } else if call.phase == CallPhase::Ringing {
+                    format!("{label} persa")
+                } else {
+                    format!("{label} senza risposta")
+                };
+                let chat = self.canonical(&call.peer);
+                if !chat.is_empty() {
+                    let mut message = Message {
+                        id: format!("call-{}", util::timestamp_ms()),
+                        chat_id: chat,
+                        from_me: call.phase != CallPhase::Ringing,
+                        ts: util::now_ts(),
+                        kind: Kind::System,
+                        text,
+                        ..Default::default()
+                    };
+                    message.sender = call.peer.clone();
+                    self.ingest(message);
+                }
                 self.note("Chiamata terminata");
             }
-            self.call = None;
             return;
         }
         let previous = self.call.as_ref();
@@ -793,6 +932,7 @@ impl App {
             self.canonical(&peer)
         };
         let muted = previous.map(|call| call.muted).unwrap_or(false);
+        let camera_on = previous.map(|call| call.camera_on).unwrap_or(video);
         let since = match (previous, phase) {
             (Some(call), phase) if phase != CallPhase::Active => call.since,
             _ => Instant::now(),
@@ -803,6 +943,7 @@ impl App {
             video,
             since,
             muted,
+            camera_on,
         });
     }
 
@@ -829,7 +970,7 @@ impl App {
         self.note(format!("{label} · {who}"));
     }
 
-    pub fn start_call(&mut self) {
+    pub fn start_call(&mut self, video: bool) {
         let Some(chat) = self.selected.clone() else {
             return;
         };
@@ -842,9 +983,15 @@ impl App {
         };
         // Nessuno stato inventato: il pannello compare quando il motore ha
         // davvero aperto microfono e casse e sta mandando l'offerta.
-        engine.send(Cmd::CallStart { chat: chat.clone() });
+        engine.send(Cmd::CallStart {
+            chat: chat.clone(),
+            video,
+        });
         let name = self.name_of(&chat);
-        self.note(format!("Chiamata a {name}…"));
+        self.note(format!(
+            "{} a {name}…",
+            if video { "Videochiamata" } else { "Chiamata" }
+        ));
     }
 
     pub fn sort_chats(&mut self) {
@@ -1256,6 +1403,14 @@ impl App {
         self.gfx.clear();
         self.reply = None;
         self.reply_label.clear();
+        if self.demo {
+            self.messages = self
+                .demo_pool
+                .iter()
+                .filter(|message| message.chat_id == id)
+                .cloned()
+                .collect();
+        }
         self.store.mark_read(&id).ok();
         if let Some(index) = self.index.get(&id).copied() {
             self.chats[index].unread = 0;
@@ -1620,19 +1775,28 @@ impl eframe::App for App {
         self.drain_events();
         self.tick(&ctx);
         self.handle_dropped_files(&ctx);
+        self.poll_call_video(&ctx);
 
         if self.logged_in() {
-            egui::Panel::left("chats")
-                .default_size(322.0)
-                .min_size(248.0)
-                .max_size(430.0)
-                .resizable(true)
-                .frame(
-                    egui::Frame::new()
-                        .fill(Palette::PANEL)
-                        .inner_margin(egui::Margin::ZERO),
-                )
-                .show(ui, |ui| self.sidebar_ui(ui));
+            // Finestra stretta: una schermata alla volta, come sul telefono.
+            // Con spazio a sufficienza la lista resta a sinistra.
+            let width = ctx.content_rect().width();
+            self.narrow = width < 820.0;
+            let sidebar_here = !self.narrow || self.selected.is_none();
+
+            if sidebar_here && !self.narrow {
+                egui::Panel::left("chats")
+                    .default_size(322.0)
+                    .min_size(232.0)
+                    .max_size((width * 0.46).max(232.0))
+                    .resizable(true)
+                    .frame(
+                        egui::Frame::new()
+                            .fill(Palette::PANEL)
+                            .inner_margin(egui::Margin::ZERO),
+                    )
+                    .show(ui, |ui| self.sidebar_ui(ui));
+            }
 
             egui::CentralPanel::default()
                 .frame(
@@ -1640,7 +1804,13 @@ impl eframe::App for App {
                         .fill(Palette::BG)
                         .inner_margin(egui::Margin::ZERO),
                 )
-                .show(ui, |ui| self.chat_ui(ui));
+                .show(ui, |ui| {
+                    if sidebar_here && self.narrow {
+                        self.sidebar_ui(ui);
+                    } else {
+                        self.chat_ui(ui);
+                    }
+                });
         } else {
             egui::CentralPanel::default()
                 .frame(
@@ -1654,6 +1824,37 @@ impl eframe::App for App {
         self.apply_actions();
         self.overlays(&ctx);
         self.toast_ui(&ctx);
+    }
+
+    /// Porta a schermo il fotogramma video più recente, se è cambiato.
+    fn poll_call_video(&mut self, ctx: &egui::Context) {
+        let in_video = self.call.as_ref().is_some_and(|call| call.video);
+        if !in_video {
+            if self.call_tex.is_some() {
+                self.call_tex = None;
+                self.call_frame_seq = 0;
+            }
+            return;
+        }
+        let Some(frame) = self.call_video.latest(self.call_frame_seq) else {
+            return;
+        };
+        self.call_frame_seq = frame.seq;
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [frame.width as usize, frame.height as usize],
+            &frame.rgba,
+        );
+        // Riuso la texture: ricrearla a ogni fotogramma (15 al secondo)
+        // butterebbe via memoria e sincronizzazione con la GPU.
+        if self.call_tex.is_some() {
+            if let Some(texture) = self.call_tex.as_mut() {
+                texture.set(image, egui::TextureOptions::LINEAR);
+            }
+        } else {
+            self.call_tex =
+                Some(ctx.load_texture("call-video", image, egui::TextureOptions::LINEAR));
+        }
+        ctx.request_repaint();
     }
 
     /// Chiusura pulita: la sessione salva chiavi e stato prima di sparire.

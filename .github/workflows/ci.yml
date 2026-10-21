@@ -260,7 +260,7 @@ jobs:
           sudo apt-get update > /dev/null 2>&1
           sudo apt-get install -y --no-install-recommends \
             xvfb xauth imagemagick libgl1-mesa-dri libegl1 libglx-mesa0 \
-            libxkbcommon-x11-0 libasound2 fontconfig fonts-dejavu-core \
+            libxkbcommon-x11-0 libasound2 fontconfig fonts-dejavu-core ffmpeg \
             > apt.log 2>&1
           bin="pkg/whats-open-0.1.0-linux-x86_64-glibc/bin/whats-open"
           mkdir -p smoke/home smoke/data smoke/cache smoke/runtime
@@ -273,6 +273,9 @@ jobs:
             echo "== --doctor =="
             HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
               XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
+            echo "== --video-check =="
+            HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --video-check
           } > smoke.log 2>&1
 
           Xvfb :99 -screen 0 1280x800x24 > xvfb.log 2>&1 &

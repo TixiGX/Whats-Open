@@ -49,6 +49,16 @@ fn main() -> anyhow::Result<()> {
         println!("{}", platform::report(&paths));
         return Ok(());
     }
+    if args.iter().any(|arg| arg == "--video-check") {
+        match engine::video::self_test() {
+            Ok(report) => println!("video: {report}"),
+            Err(error) => {
+                eprintln!("video: {error}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
 
     let pair = parse_pair_number(&args);
 
@@ -70,7 +80,9 @@ fn main() -> anyhow::Result<()> {
         .with_title("Whats-Open")
         .with_app_id("whats-open")
         .with_inner_size([1040.0, 720.0])
-        .with_min_inner_size([760.0, 520.0]);
+        // Sotto gli 820 px la finestra passa a una schermata per volta:
+        // la chat resta leggibile anche non massimizzata o su schermi piccoli.
+        .with_min_inner_size([560.0, 430.0]);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
@@ -119,6 +131,7 @@ fn print_help() {
          Opzioni:\n\
          \x20 --pair, --accoppia <numero>  collega con un codice a 8 caratteri\n\
          \x20 --doctor, --diagnostica      stampa l'ambiente e le dipendenze trovate\n\
+         \x20 --video-check                prova il percorso video delle chiamate\n\
          \x20 --version                    versione\n\
          \x20 --help                       questo testo\n\n\
          Variabili d'ambiente:\n\

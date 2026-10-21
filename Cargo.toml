@@ -9,6 +9,7 @@ repository = "https://github.com/TixiGX/Whats-Open"
 default-run = "whats-open"
 
 [dependencies]
+libc = "0.2"
 anyhow = "1"
 # Solo per l'ora locale: la libreria del protocollo porta già chrono.
 chrono = { version = "0.4", features = ["clock"] }

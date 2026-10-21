@@ -371,6 +371,7 @@ use whatsapp_rust::prelude::*;
 use whatsapp_rust::types::call::{CallAction, IncomingCall};
 use whatsapp_rust::voip::{CallEvent, CallHandle};
 
+use super::video::{FrameSlot, VideoSession};
 use super::{emit, CallPhase, Event, EventSink};
 
 /// Una sola chiamata alla volta, come nell'app ufficiale su un dispositivo.
@@ -382,6 +383,9 @@ pub struct CallSession {
     pub peer: String,
     pub video: bool,
     pub active: bool,
+    /// Fotocamera/decodificatore della videochiamata. Fermato alla fine.
+    pub media: Option<VideoSession>,
+    pub camera_on: bool,
 }
 
 pub type SharedCall = Arc<tokio::sync::Mutex<CallSession>>;
@@ -453,14 +457,22 @@ pub async fn on_incoming(
 }
 
 /// Risponde alla chiamata in arrivo: microfono e casse partono insieme
-/// all'accettazione, il video (se offerto) resta spento.
-pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
+/// all'accettazione. Se l'altro ha offerto il video e abbiamo ffmpeg, si
+/// risponde anche in video; altrimenti la chiamata resta vocale.
+pub async fn accept(
+    client: Arc<Client>,
+    with_video: bool,
+    camera: String,
+    slot: FrameSlot,
+    state: SharedCall,
+    sink: EventSink,
+) {
     let incoming = { state.lock().await.incoming.clone() };
     let Some(incoming) = incoming else {
         return;
     };
     let peer = incoming.from.to_string();
-    let video = matches!(&incoming.action, CallAction::Offer { is_video: true, .. });
+    let offered_video = matches!(&incoming.action, CallAction::Offer { is_video: true, .. });
     let audio = match start() {
         Ok(audio) => audio,
         Err(err) => {
@@ -477,13 +489,27 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
                 Event::Call {
                     phase: CallPhase::Ended,
                     peer,
-                    video,
+                    video: offered_video,
                 },
             );
             return;
         }
     };
 
+    let mut media = None;
+    if with_video && !offered_video {
+        emit(
+            &sink,
+            Event::Notice("L'altro ha chiamato solo in audio".into()),
+        );
+    } else if with_video {
+        match VideoSession::start(Some(camera), slot) {
+            Ok(session) => media = Some(session),
+            Err(err) => emit(&sink, Event::Notice(format!("Video non disponibile: {err}"))),
+        }
+    }
+
+    let video = media.is_some();
     emit(
         &sink,
         Event::Call {
@@ -493,12 +519,15 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
         },
     );
 
-    let result = client
+    let mut builder = client
         .voip()
         .accept(&incoming)
-        .audio(audio.mic.clone(), audio.speaker.clone())
-        .start()
-        .await;
+        .audio(audio.mic.clone(), audio.speaker.clone());
+    if let Some(video) = media.as_ref() {
+        let (source, sink_video) = video.endpoints();
+        builder = builder.video(source, sink_video);
+    }
+    let result = builder.start().await;
 
     match result {
         Ok(handle) => {
@@ -509,6 +538,8 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
                 session.handle = Some(Arc::new(handle));
                 session.peer = peer.clone();
                 session.video = video;
+                session.media = media;
+                session.camera_on = video;
             }
             monitor(state, sink, peer, video, false).await;
         }
@@ -518,6 +549,11 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
             let mut session = state.lock().await;
             session.incoming = None;
             session.audio = None;
+            session.media = None;
+            emit(
+                &sink,
+                Event::Notice(format!("Chiamata non accettata: {err}")),
+            );
             emit(
                 &sink,
                 Event::Call {
@@ -530,13 +566,26 @@ pub async fn accept(client: Arc<Client>, state: SharedCall, sink: EventSink) {
     }
 }
 
-/// Avvia una chiamata vocale verso una chat.
-pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall, sink: EventSink) {
+/// Avvia una chiamata (vocale o video) verso una chat.
+pub async fn start_outgoing(
+    client: Arc<Client>,
+    chat: String,
+    video: bool,
+    camera: String,
+    slot: FrameSlot,
+    state: SharedCall,
+    sink: EventSink,
+) {
     let Ok(jid) = chat.parse::<Jid>() else {
+        emit(&sink, Event::Notice("Indirizzo non valido".into()));
         return;
     };
-    if state.lock().await.handle.is_some() {
-        return;
+    {
+        let session = state.lock().await;
+        if session.handle.is_some() || session.incoming.is_some() {
+            emit(&sink, Event::Notice("Sei già in una chiamata".into()));
+            return;
+        }
     }
     let audio = match start() {
         Ok(audio) => audio,
@@ -549,28 +598,48 @@ pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall
                 Event::Call {
                     phase: CallPhase::Ended,
                     peer: chat,
-                    video: false,
+                    video,
                 },
             );
             emit(&sink, Event::Notice(format!("Chiamata non avviata: {err}")));
             return;
         }
     };
+
+    let mut media = None;
+    let mut video = video;
+    if video {
+        match VideoSession::start(Some(camera), slot) {
+            Ok(session) => media = Some(session),
+            Err(err) => {
+                // Senza ffmpeg la videochiamata non può esistere: si parte in
+                // audio e lo si dice, invece di far finta.
+                video = false;
+                emit(&sink, Event::Notice(format!("Video non disponibile: {err}")));
+            }
+        }
+    }
+
     // Il pannello compare solo adesso: prima non c'è nessuna chiamata.
     emit(
         &sink,
         Event::Call {
             phase: CallPhase::Dialing,
             peer: chat.clone(),
-            video: false,
+            video,
         },
     );
-    let result = client
+
+    let mut builder = client
         .voip()
         .call(&jid)
-        .audio(audio.mic.clone(), audio.speaker.clone())
-        .start()
-        .await;
+        .audio(audio.mic.clone(), audio.speaker.clone());
+    if let Some(session) = media.as_ref() {
+        let (source, sink_video) = session.endpoints();
+        builder = builder.video(source, sink_video);
+    }
+    let result = builder.start().await;
+
     match result {
         Ok(handle) => {
             {
@@ -578,19 +647,24 @@ pub async fn start_outgoing(client: Arc<Client>, chat: String, state: SharedCall
                 session.audio = Some(audio);
                 session.handle = Some(Arc::new(handle));
                 session.peer = chat.clone();
-                session.video = false;
+                session.video = video;
+                session.media = media;
+                session.camera_on = video;
                 session.active = false;
             }
-            monitor(state, sink, chat, false, true).await;
+            monitor(state, sink, chat, video, true).await;
         }
         Err(err) => {
             log::warn!("chiamata in uscita: {err}");
+            if let Some(mut media) = media.take() {
+                media.stop();
+            }
             emit(
                 &sink,
                 Event::Call {
                     phase: CallPhase::Ended,
                     peer: chat,
-                    video: false,
+                    video,
                 },
             );
             emit(
@@ -657,9 +731,14 @@ async fn monitor(state: SharedCall, sink: EventSink, peer: String, video: bool, 
     }
     {
         let mut session = state.lock().await;
+        if let Some(mut media) = session.media.take() {
+            media.stop();
+        }
         session.handle = None;
         session.audio = None;
         session.active = false;
+        session.camera_on = false;
+        session.video = false;
         session.peer.clear();
     }
     emit(
@@ -712,6 +791,15 @@ pub async fn set_muted(state: SharedCall, muted: bool) {
     if let Some(audio) = state.lock().await.audio.as_ref() {
         audio.set_muted(muted);
     }
+}
+
+/// Accende o spegne la fotocamera mantenendo la chiamata in piedi.
+pub async fn set_camera(state: SharedCall, on: bool) {
+    let mut session = state.lock().await;
+    if let Some(media) = session.media.as_ref() {
+        media.set_camera(on && media.has_camera());
+    }
+    session.camera_on = on && session.media.as_ref().is_some_and(|media| media.has_camera());
 }
 
 /// Chiamata persa (offerta arrivata mentre eravamo offline): non squilla,

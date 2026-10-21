@@ -207,6 +207,119 @@ pub fn phone_display(user: &str) -> String {
 
 /// Vero se il testo è solo un numero di telefono (con eventuale prefisso,
 /// spazi o trattini): serve a non salvare un numero come nome del contatto.
+/// Riduce un numero alla forma confrontabile: solo cifre, senza prefisso
+/// internazionale quando non serve. `+39 333 123 4567` → `3331234567` non è
+/// possibile senza sapere il Paese, quindi si tengono le ultime 9-10 cifre.
+pub fn phone_key(number: &str) -> String {
+    let digits: String = number.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if digits.len() > 10 {
+        digits[digits.len() - 10..].to_string()
+    } else {
+        digits
+    }
+}
+
+/// Voce di una rubrica esportata in vCard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VCardEntry {
+    pub name: String,
+    pub phones: Vec<String>,
+}
+
+/// Parser vCard essenziale ma tollerante: piega le righe spezzate, legge FN e
+/// N, raccoglie tutti i TEL. Non serve altro per riportare i nomi nelle chat.
+pub fn parse_vcards(text: &str) -> Vec<VCardEntry> {
+    let mut entries = Vec::new();
+    let mut name = String::new();
+    let mut first = String::new();
+    let mut last = String::new();
+    let mut phones: Vec<String> = Vec::new();
+    let mut inside = false;
+
+    let mut lines: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(last_line) = lines.last_mut() {
+                last_line.push_str(line.trim_start());
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+
+    for line in lines {
+        let upper = line.to_ascii_uppercase();
+        if upper.starts_with("BEGIN:VCARD") {
+            inside = true;
+            name.clear();
+            first.clear();
+            last.clear();
+            phones.clear();
+            continue;
+        }
+        if upper.starts_with("END:VCARD") {
+            if inside {
+                let chosen = if !name.trim().is_empty() {
+                    name.trim().to_string()
+                } else {
+                    format!("{} {}", first.trim(), last.trim())
+                        .trim()
+                        .to_string()
+                };
+                if !chosen.is_empty() && !phones.is_empty() {
+                    entries.push(VCardEntry {
+                        name: chosen,
+                        phones: phones.clone(),
+                    });
+                }
+            }
+            inside = false;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key_upper = key.to_ascii_uppercase();
+        // `item1.TEL` e `TEL;TYPE=CELL` finiscono nello stesso posto.
+        let field = key_upper
+            .rsplit('.')
+            .next()
+            .unwrap_or(&key_upper)
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let value = unescape_vcard(value);
+        match field.as_str() {
+            "FN" => name = value,
+            "TEL" => {
+                if !value.trim().is_empty() {
+                    phones.push(value);
+                }
+            }
+            "N" => {
+                let mut parts = value.split(';');
+                last = parts.next().unwrap_or("").to_string();
+                first = parts.next().unwrap_or("").to_string();
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
+fn unescape_vcard(value: &str) -> String {
+    value
+        .replace("\\n", " ")
+        .replace("\\,", ",")
+        .replace("\\;", ";")
+        .replace("\\\\", "\\")
+}
+
 pub fn looks_like_phone(text: &str) -> bool {
     let trimmed = text.trim();
     let mut digits = 0usize;
@@ -398,6 +511,21 @@ mod tests {
         );
         assert_eq!(initials("Maria Rossi"), "MR");
         assert_eq!(initials(""), "?");
+    }
+
+    #[test]
+    fn la_rubrica_vcard_diventa_nomi() {
+        let text = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Anna Ferrari\r\n\
+                    TEL;TYPE=CELL:+39 333 111 2222\r\nEND:VCARD\r\n\
+                    BEGIN:VCARD\r\nN:Rossi;Luca;;;\r\n\
+                    item1.TEL:3401234567\r\nEND:VCARD\r\n";
+        let entries = parse_vcards(text);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "Anna Ferrari");
+        assert_eq!(entries[0].phones, vec!["+39 333 111 2222"]);
+        assert_eq!(entries[1].name, "Luca Rossi");
+        assert_eq!(phone_key(&entries[0].phones[0]), "3331112222");
+        assert_eq!(phone_key("+39 333 111 2222"), phone_key("3331112222"));
     }
 
     #[test]
