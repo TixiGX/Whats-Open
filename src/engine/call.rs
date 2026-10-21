@@ -802,7 +802,7 @@ fn spawn_call_log(
 ) {
     tokio::spawn(async move {
         let record = wa::CallLogRecord {
-            call_result: Some(result as i32),
+            call_result: Some(result),
             duration: Some(duration_s as i64),
             start_time: Some(started_ms),
             is_incoming: Some(incoming),
