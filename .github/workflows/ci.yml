@@ -369,6 +369,27 @@ jobs:
           fi
           import -display :99 -window root smoke/light.png 2> smoke/light.err
           kill "$light" 2>/dev/null
+          sleep 1
+
+          # Quinta istanza: pannello di una videochiamata attiva, renderizzato
+          # dalla demo. Serve a controllare a occhio il layout della chiamata
+          # senza un account vero.
+          mkdir -p smoke/chome smoke/cdata smoke/ccache smoke/cruntime
+          chmod 700 smoke/cruntime
+          HOME="$PWD/smoke/chome" XDG_RUNTIME_DIR="$PWD/smoke/cruntime" \
+            XDG_DATA_HOME="$PWD/smoke/cdata" XDG_CACHE_HOME="$PWD/smoke/ccache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_CALL=video \
+            "$bin" > smoke/cout.log 2> smoke/cerr.log &
+          call=$!
+          sleep 8
+          if kill -0 "$call" 2>/dev/null; then
+            echo "== pannello chiamata: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== pannello chiamata: uscita da sola ==" >> smoke.log
+            tail -10 smoke/cerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/call.png 2> smoke/call.err
+          kill "$call" 2>/dev/null
 
           # Un commento per immagine: GitHub tronca i commenti a 64 KB, e con
           # quattro immagini nello stesso testo resterebbero miniature illeggibili.
@@ -399,6 +420,7 @@ jobs:
           post_image DEMO_B64 smoke/demo.png
           post_image NARROW_B64 smoke/narrow.png
           post_image LIGHT_B64 smoke/light.png
+          post_image CALL_B64 smoke/call.png
 
           cat smoke.log
           grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
@@ -435,6 +457,7 @@ jobs:
             smoke/demo.png
             smoke/narrow.png
             smoke/light.png
+            smoke/call.png
           if-no-files-found: ignore
           retention-days: 7
 

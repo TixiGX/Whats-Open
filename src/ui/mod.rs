@@ -700,6 +700,22 @@ impl App {
         push("g2", &group, &luca, false, now - 840, Kind::Gif, "GIF", Status::Read, false, 0, None);
         push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua.", Status::Read, false, 0, None);
 
+        // `WHATS_OPEN_DEMO_CALL=video|audio`: mostra il pannello di chiamata
+        // nella demo, così lo si può guardare (e fotografare in CI) senza un
+        // account vero. Non tocca il motore: è solo la vista.
+        if let Ok(kind) = std::env::var("WHATS_OPEN_DEMO_CALL") {
+            let video = kind.trim().to_lowercase() != "audio";
+            self.selected = Some(anna.clone());
+            self.call = Some(CallUi {
+                peer: anna.clone(),
+                phase: crate::engine::CallPhase::Active,
+                video,
+                since: Instant::now() - Duration::from_secs(12),
+                muted: false,
+                camera_on: video,
+            });
+        }
+
         self.demo_pool = std::mem::take(&mut self.messages);
         self.messages = self
             .demo_pool
