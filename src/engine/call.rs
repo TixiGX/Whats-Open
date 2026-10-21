@@ -1103,3 +1103,47 @@ pub fn missed(
         },
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn il_silenzio_e_un_canale_valido() {
+        // Senza microfono la chiamata deve comunque avere frame da inviare:
+        // altrimenti l'altro sentirebbe un vuoto inspiegabile.
+        let rx = silent_mic();
+        let frame = rx
+            .recv_blocking()
+            .expect("un frame di silenzio entro il timeout");
+        assert_eq!(frame.len(), FRAME);
+        assert!(frame.iter().all(|sample| *sample == 0));
+
+        let tx = silent_speaker();
+        assert!(tx.try_send(vec![0i16; FRAME]).is_ok());
+    }
+
+    #[test]
+    fn gli_errori_diventano_frasi() {
+        let text = call_error_text(&CallError::NoDevices);
+        assert!(text.contains("dispositivo"), "{text}");
+        let text = call_error_text(&CallError::ResponseTimeout);
+        assert!(text.contains("riprova"), "{text}");
+        let text = call_error_text(&CallError::Media("altro guasto"));
+        assert!(text.contains("altro guasto"), "{text}");
+    }
+
+    #[test]
+    fn il_ricampionatore_regge_le_frequenze_comuni() {
+        for rate in [8_000u32, 16_000, 44_100, 48_000, 96_000] {
+            let mut down = Down::new(rate);
+            let mut out: Vec<i16> = Vec::new();
+            for _ in 0..rate / 10 {
+                down.push(0.05, &mut out);
+            }
+            let expected = (rate / 10) as f64 * (RATE as f64 / rate as f64);
+            let delta = (out.len() as f64 - expected).abs();
+            assert!(delta <= 2.0, "{rate} Hz: {} campioni, attesi {expected}", out.len());
+        }
+    }
+}
