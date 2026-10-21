@@ -124,23 +124,25 @@ impl App {
             }
         }
 
-        egui::Frame::new()
-            .fill(egui::Color32::WHITE)
-            .corner_radius(egui::CornerRadius::same(16))
-            .inner_margin(egui::Margin::same(14))
-            .show(ui, |ui| {
-                if let Some(texture) = self.qr_tex.as_ref() {
-                    ui.add(
-                        egui::Image::new(egui::load::SizedTexture::new(
-                            texture.id(),
-                            Vec2::splat(228.0),
-                        ))
-                        .corner_radius(4),
-                    );
-                } else {
-                    ui.allocate_exact_size(Vec2::splat(228.0), egui::Sense::hover());
-                }
-            });
+        // La scheda si disegna a mano: dentro un layout centrato un Frame
+        // prenderebbe tutta la larghezza disponibile e diventerebbe una fascia
+        // bianca da bordo a bordo.
+        let side = 228.0;
+        let padding = 14.0;
+        let (card, _) = ui.allocate_exact_size(
+            Vec2::splat(side + padding * 2.0),
+            egui::Sense::hover(),
+        );
+        ui.painter().rect_filled(
+            card,
+            egui::CornerRadius::same(16),
+            egui::Color32::WHITE,
+        );
+        if let Some(texture) = self.qr_tex.as_ref() {
+            let qr = egui::Rect::from_center_size(card.center(), Vec2::splat(side));
+            egui::Image::new(egui::load::SizedTexture::new(texture.id(), qr.size()))
+                .paint_at(ui, qr);
+        }
 
         ui.add_space(14.0);
         ui.label(

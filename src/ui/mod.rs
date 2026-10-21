@@ -451,6 +451,32 @@ impl App {
         }
     }
 
+    /// Aggiorna subito la riga in lista quando arriva un nome dal telefono:
+    /// senza questo, la rubrica resterebbe nei contatti ma la lista
+    /// continuerebbe a mostrare il numero fino al riavvio.
+    fn rename_chat_from_contacts(&mut self, jid: &str) {
+        let id = self.canonical(jid);
+        let Some(contact) = self.contact_for(&id) else {
+            return;
+        };
+        let name = contact.name.trim().to_string();
+        if name.is_empty() || util::looks_like_phone(&name) {
+            return;
+        }
+        let Some(index) = self.index.get(&id).copied() else {
+            return;
+        };
+        let Some(chat) = self.chats.get_mut(index) else {
+            return;
+        };
+        if chat.name == name {
+            return;
+        }
+        chat.name = name.clone();
+        self.store.set_chat_name(&id, &name).ok();
+        self.sort_chats();
+    }
+
     /// Importa una rubrica esportata dal telefono (`.vcf`). È la via più
     /// leggera per avere subito i nomi: nessuna rete, nessun permesso, un file
     /// che l'utente sceglie. I numeri vengono confrontati sulle ultime cifre,
@@ -1150,6 +1176,7 @@ impl App {
             }
             Event::Contact { jid, name, rank } => {
                 self.apply_contact_name(&jid, &name, rank);
+                self.rename_chat_from_contacts(&jid);
             }
             Event::Alias { lid, pn } => {
                 self.adopt_alias(&lid, &pn);
