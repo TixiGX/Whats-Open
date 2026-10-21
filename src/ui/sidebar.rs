@@ -3,14 +3,14 @@
 use egui::{Align2, FontId, Pos2, Rect, Response, RichText, Sense, Vec2};
 
 use crate::model::Chat;
-use crate::theme::Palette;
+use crate::theme::pal;
 use crate::util;
 
 use super::{gfx, widgets, App};
 
 impl App {
     pub fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
+        ui.add_space(12.0);
 
         let mut open_new = false;
         let mut open_settings = false;
@@ -36,19 +36,24 @@ impl App {
                 );
             }
             ui.add_space(2.0);
-            ui.label(RichText::new("Whats-Open").size(15.0).color(Palette::TEXT));
+            ui.label(
+                RichText::new("Whats-Open")
+                    .size(15.5)
+                    .strong()
+                    .color(pal().text),
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(10.0);
+                ui.add_space(12.0);
                 if crate::icons::Icon::Gear
-                    .button(ui, 30.0, Palette::MUTED)
+                    .button(ui, 30.0, pal().muted)
                     .on_hover_text("Impostazioni")
                     .clicked()
                 {
                     open_settings = true;
                 }
                 if crate::icons::Icon::Plus
-                    .button(ui, 30.0, Palette::MUTED)
+                    .button(ui, 30.0, pal().muted)
                     .on_hover_text("Nuova chat")
                     .clicked()
                 {
@@ -64,21 +69,22 @@ impl App {
             self.new_chat = true;
         }
 
-        ui.add_space(10.0);
+        ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
             let width = ui.available_width() - 12.0;
             let frame = egui::Frame::new()
-                .fill(Palette::SURFACE)
-                .corner_radius(egui::CornerRadius::same(10))
-                .inner_margin(egui::Margin::symmetric(10, 6));
+                .fill(pal().surface)
+                .stroke(egui::Stroke::new(1.0, pal().border))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(egui::Margin::symmetric(12, 7));
             frame.show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.horizontal(|ui| {
                     crate::icons::Icon::Search.paint(
                         ui,
                         Rect::from_min_size(ui.cursor().min, Vec2::splat(15.0)),
-                        Palette::FAINT,
+                        pal().faint,
                     );
                     ui.add_space(19.0);
                     let room = if self.search.is_empty() {
@@ -91,11 +97,11 @@ impl App {
                             .hint_text("Cerca chat e contatti")
                             .desired_width(room)
                             .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
-                            .text_color(Palette::TEXT),
+                            .text_color(pal().text),
                     );
                     if !self.search.is_empty()
                         && crate::icons::Icon::Close
-                            .button(ui, 18.0, Palette::MUTED)
+                            .button(ui, 18.0, pal().muted)
                             .on_hover_text("Cancella la ricerca")
                             .clicked()
                     {
@@ -105,9 +111,9 @@ impl App {
             });
         });
 
-        ui.add_space(8.0);
+        ui.add_space(10.0);
         ui.separator();
-        ui.add_space(2.0);
+        ui.add_space(4.0);
 
         let query = self.search.trim().to_lowercase();
         let mut chosen: Option<String> = None;
@@ -151,7 +157,7 @@ impl App {
                                 "Nessun risultato"
                             })
                             .size(12.5)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                         );
                     });
                 }
@@ -190,28 +196,32 @@ fn chat_row(
     typing: bool,
 ) -> Response {
     let height = 66.0;
-    let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let full = ui.available_width();
+    let row = Rect::from_min_size(ui.cursor().min, Vec2::new(full, height));
+    // Margine laterale e angoli tondi: la riga sembra una scheda, non una
+    // fascia da bordo a bordo.
+    let rect = row.shrink2(Vec2::new(8.0, 3.0));
+    let (_, response) = ui.allocate_exact_size(Vec2::new(full, height), Sense::click());
 
     {
         let painter = ui.painter();
         if selected {
-            painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::SURFACE);
+            painter.rect_filled(rect, egui::CornerRadius::same(12), pal().surface);
             // Barretta verticale: dice dove siamo senza aggiungere colore.
-            painter.rect_filled(
-                Rect::from_min_size(rect.left_top(), Vec2::new(3.0, rect.height())),
-                egui::CornerRadius::same(0),
-                Palette::TEXT,
+            let bar = Rect::from_min_size(
+                Pos2::new(rect.left() + 1.0, rect.center().y - 11.0),
+                Vec2::new(3.0, 22.0),
             );
+            painter.rect_filled(bar, egui::CornerRadius::same(2), pal().text);
         } else if response.hovered() {
-            painter.rect_filled(rect, egui::CornerRadius::same(0), Palette::PANEL);
+            painter.rect_filled(rect, egui::CornerRadius::same(12), pal().hover);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
     }
 
     let avatar_rect = Rect::from_center_size(
-        Pos2::new(rect.left() + 36.0, rect.center().y),
-        Vec2::splat(44.0),
+        Pos2::new(rect.left() + 33.0, rect.center().y),
+        Vec2::splat(42.0),
     );
     widgets::avatar_tex(
         ui,
@@ -224,14 +234,10 @@ fn chat_row(
     );
 
     let painter = ui.painter();
-    let text_left = rect.left() + 66.0;
-    let name_color = if chat.unread > 0 {
-        Palette::WHITE
-    } else {
-        Palette::TEXT
-    };
+    let text_left = rect.left() + 62.0;
+    let name_color = pal().text;
     // Caratteri che entrano davvero: il pannello è ridimensionabile.
-    let room = (rect.right() - 58.0 - text_left).max(90.0);
+    let room = (rect.right() - 56.0 - text_left).max(90.0);
     let title = util::truncate(title, (room / 7.2) as usize);
     painter.text(
         Pos2::new(text_left, rect.center().y - 10.5),
@@ -250,7 +256,7 @@ fn chat_row(
     } else {
         chat.preview.clone()
     };
-    let preview_color = if typing { Palette::TEXT } else { Palette::MUTED };
+    let preview_color = if typing { pal().text } else { pal().muted };
     let preview = util::truncate(&preview, (room / 5.9) as usize);
     painter.text(
         Pos2::new(text_left, rect.center().y + 11.0),
@@ -267,9 +273,9 @@ fn chat_row(
         util::fmt_chat_time(chat.last_ts),
         FontId::proportional(10.5),
         if chat.unread > 0 {
-            Palette::TEXT
+            pal().text
         } else {
-            Palette::FAINT
+            pal().faint
         },
     );
 
@@ -278,7 +284,7 @@ fn chat_row(
             Pos2::new(right - 8.0, rect.center().y + 13.0),
             Vec2::splat(17.0),
         );
-        painter.circle_filled(badge.center(), 8.5, Palette::WHITE);
+        painter.circle_filled(badge.center(), 8.5, pal().text);
         painter.text(
             badge.center(),
             Align2::CENTER_CENTER,
@@ -288,13 +294,13 @@ fn chat_row(
                 chat.unread.to_string()
             },
             FontId::proportional(9.5),
-            crate::theme::Palette::OWN_TEXT,
+            pal().panel,
         );
     } else if chat.pinned {
         painter.circle_filled(
             Pos2::new(right - 4.0, rect.center().y + 13.0),
             2.2,
-            Palette::MUTED,
+            pal().muted,
         );
     }
 

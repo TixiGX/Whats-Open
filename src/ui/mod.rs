@@ -24,7 +24,7 @@ use crate::play::record::Recorder;
 use crate::play::video::VideoPlayer;
 use crate::model::Contact;
 use crate::store::Store;
-use crate::theme::Palette;
+use crate::theme::pal;
 use crate::util::{self, Paths};
 
 use gfx::Textures;
@@ -191,6 +191,10 @@ impl App {
 
     pub fn new(cc: &eframe::CreationContext<'_>, paths: Paths) -> anyhow::Result<Self> {
         let config = Config::load(&paths.data);
+        // Il tema si decide una volta, prima di disegnare: così la prima
+        // finestra ha già i colori giusti e non lampeggia.
+        let (mode, source) = crate::theme::resolve(&config.theme);
+        crate::theme::set(mode, source);
         crate::theme::apply(&cc.egui_ctx, config.system_fonts);
         let store = Store::open(&paths.db)?;
         // La mappatura LID ↔ numero va ripresa da disco *prima* di leggere
@@ -1776,12 +1780,12 @@ impl App {
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Palette::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+                    .fill(pal().surface)
+                    .stroke(egui::Stroke::new(1.0, pal().border))
                     .corner_radius(egui::CornerRadius::same(10))
                     .inner_margin(egui::Margin::symmetric(14, 10))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(&toast.text).color(Palette::TEXT).size(12.5));
+                        ui.label(RichText::new(&toast.text).color(pal().text).size(12.5));
                     });
             });
     }
@@ -1850,7 +1854,7 @@ impl eframe::App for App {
                     .resizable(true)
                     .frame(
                         egui::Frame::new()
-                            .fill(Palette::PANEL)
+                            .fill(pal().panel)
                             .inner_margin(egui::Margin::ZERO),
                     )
                     .show(ui, |ui| self.sidebar_ui(ui));
@@ -1859,7 +1863,7 @@ impl eframe::App for App {
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
-                        .fill(Palette::BG)
+                        .fill(pal().bg)
                         .inner_margin(egui::Margin::ZERO),
                 )
                 .show(ui, |ui| {
@@ -1873,7 +1877,7 @@ impl eframe::App for App {
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
-                        .fill(Palette::BG)
+                        .fill(pal().bg)
                         .inner_margin(egui::Margin::ZERO),
                 )
                 .show(ui, |ui| self.login_ui(ui));
@@ -1906,9 +1910,9 @@ impl eframe::App for App {
 
 pub fn color_for_status(status: Status) -> Color32 {
     match status {
-        Status::Read | Status::Played => Palette::WHITE,
-        Status::Failed => Palette::DANGER,
-        _ => Palette::MUTED,
+        Status::Read | Status::Played => pal().white,
+        Status::Failed => pal().danger,
+        _ => pal().muted,
     }
 }
 

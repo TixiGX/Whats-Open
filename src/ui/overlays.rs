@@ -11,7 +11,7 @@ use crate::model::{Chat, Kind, Message};
 use crate::play::audio::AudioPlayer;
 use crate::play::record::Recorder;
 use crate::play::video::VideoPlayer;
-use crate::theme::Palette;
+use crate::theme::pal;
 use crate::util;
 
 use super::gfx;
@@ -438,8 +438,8 @@ impl App {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Palette::PANEL)
-                    .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+                    .fill(pal().panel)
+                    .stroke(egui::Stroke::new(1.0, pal().border))
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(20, 16))
                     .show(ui, |ui| {
@@ -447,10 +447,10 @@ impl App {
                         ui.label(
                             RichText::new("Messaggio · una volta")
                                 .size(11.0)
-                                .color(Palette::FAINT),
+                                .color(pal().faint),
                         );
                         ui.add_space(6.0);
-                        ui.label(RichText::new(&text).size(15.0).color(Palette::TEXT));
+                        ui.label(RichText::new(&text).size(15.0).color(pal().text));
                         ui.add_space(12.0);
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
@@ -531,8 +531,8 @@ impl App {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(Palette::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+                    .fill(pal().surface)
+                    .stroke(egui::Stroke::new(1.0, pal().border))
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(16, 12))
                     .show(ui, |ui| {
@@ -544,7 +544,7 @@ impl App {
                                 egui::Sense::hover(),
                             );
                             ui.painter()
-                                .rect_filled(rect, egui::CornerRadius::same(10), Palette::BG);
+                                .rect_filled(rect, egui::CornerRadius::same(10), pal().bg);
                             match texture.as_ref() {
                                 Some(texture) => {
                                     let _ = ui.put(
@@ -566,7 +566,7 @@ impl App {
                                             "Video in arrivo…"
                                         },
                                         egui::FontId::proportional(11.5),
-                                        Palette::FAINT,
+                                        pal().faint,
                                     );
                                 }
                             }
@@ -596,7 +596,7 @@ impl App {
                             );
                             ui.add_space(6.0);
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(&title).size(13.5).color(Palette::TEXT));
+                                ui.label(RichText::new(&title).size(13.5).color(pal().text));
                                 let line = if phase == CallPhase::Active {
                                     format!(
                                         "{status} · {}",
@@ -605,7 +605,7 @@ impl App {
                                 } else {
                                     status.to_string()
                                 };
-                                ui.label(RichText::new(line).size(11.0).color(Palette::MUTED));
+                                ui.label(RichText::new(line).size(11.0).color(pal().muted));
                             });
                         });
 
@@ -613,7 +613,7 @@ impl App {
                         ui.horizontal(|ui| {
                             if phase == CallPhase::Ringing {
                                 if crate::icons::Icon::Phone
-                                    .button(ui, 34.0, Palette::WHITE)
+                                    .button(ui, 34.0, pal().white)
                                     .on_hover_text("Rispondi")
                                     .clicked()
                                 {
@@ -621,14 +621,14 @@ impl App {
                                 }
                                 if video
                                     && crate::icons::Icon::Video
-                                        .button(ui, 34.0, Palette::WHITE)
+                                        .button(ui, 34.0, pal().white)
                                         .on_hover_text("Rispondi in video")
                                         .clicked()
                                 {
                                     accept_video = true;
                                 }
                                 if crate::icons::Icon::PhoneOff
-                                    .button(ui, 34.0, Palette::DANGER)
+                                    .button(ui, 34.0, pal().danger)
                                     .on_hover_text("Rifiuta")
                                     .clicked()
                                 {
@@ -645,7 +645,7 @@ impl App {
                                         .button(
                                             ui,
                                             34.0,
-                                            if muted { Palette::FAINT } else { Palette::TEXT },
+                                            if muted { pal().faint } else { pal().text },
                                         )
                                         .on_hover_text(if muted {
                                             "Riattiva microfono"
@@ -667,9 +667,9 @@ impl App {
                                                 ui,
                                                 34.0,
                                                 if camera_on {
-                                                    Palette::TEXT
+                                                    pal().text
                                                 } else {
-                                                    Palette::FAINT
+                                                    pal().faint
                                                 },
                                             )
                                             .on_hover_text(if camera_on {
@@ -684,7 +684,7 @@ impl App {
                                     }
                                 }
                                 if crate::icons::Icon::PhoneOff
-                                    .button(ui, 34.0, Palette::DANGER)
+                                    .button(ui, 34.0, pal().danger)
                                     .on_hover_text("Chiudi")
                                     .clicked()
                                 {
@@ -802,7 +802,7 @@ impl App {
                             "Immagine non disponibile"
                         },
                         egui::FontId::proportional(14.0),
-                        Palette::MUTED,
+                        pal().muted,
                     );
                 }
 
@@ -835,7 +835,7 @@ impl App {
                     egui::Align2::CENTER_BOTTOM,
                     util::truncate(&caption, 110),
                     egui::FontId::proportional(12.0),
-                    Palette::MUTED,
+                    pal().muted,
                 );
 
                 if response.clicked() {
@@ -894,7 +894,7 @@ impl App {
                         egui::Align2::CENTER_CENTER,
                         "Caricamento…",
                         egui::FontId::proportional(13.0),
-                        Palette::MUTED,
+                        pal().muted,
                     );
                 }
 
@@ -906,7 +906,7 @@ impl App {
                     } else {
                         crate::icons::Icon::Play
                     };
-                    if icon.button(ui, 30.0, Palette::TEXT).clicked() {
+                    if icon.button(ui, 30.0, pal().text).clicked() {
                         video.player.toggle();
                     }
 
@@ -915,10 +915,10 @@ impl App {
                         ui.label(
                             RichText::new("in riproduzione")
                                 .size(11.0)
-                                .color(Palette::MUTED),
+                                .color(pal().muted),
                         );
                         if crate::icons::Icon::Close
-                            .button(ui, 28.0, Palette::MUTED)
+                            .button(ui, 28.0, pal().muted)
                             .clicked()
                         {
                             close = true;
@@ -945,7 +945,7 @@ impl App {
                                 Vec2::new(rect.width() * fraction, 3.0),
                             ),
                             egui::CornerRadius::same(1),
-                            Palette::WHITE,
+                            pal().white,
                         );
                     }
                     if response.clicked() {
@@ -965,11 +965,11 @@ impl App {
                             util::human_duration(duration.max(0.0) as u32)
                         ))
                         .size(11.0)
-                        .color(Palette::MUTED),
+                        .color(pal().muted),
                     );
 
                     if crate::icons::Icon::Close
-                        .button(ui, 28.0, Palette::MUTED)
+                        .button(ui, 28.0, pal().muted)
                         .clicked()
                     {
                         close = true;
@@ -1029,7 +1029,7 @@ impl App {
                                     name.as_str()
                                 })
                                 .size(14.0)
-                                .color(Palette::TEXT),
+                                .color(pal().text),
                             );
                             ui.label(
                                 RichText::new(if jid.is_empty() {
@@ -1038,7 +1038,7 @@ impl App {
                                     util::phone_display(&util::jid_user(&jid))
                                 })
                                 .size(11.5)
-                                .color(Palette::MUTED),
+                                .color(pal().muted),
                             );
                         });
                     });
@@ -1050,7 +1050,7 @@ impl App {
                     ui.label(
                         RichText::new("Archivio")
                             .size(11.0)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                     );
                     let size = dir_size(&self.paths.cache)
                         + dir_size(&self.paths.data);
@@ -1058,7 +1058,7 @@ impl App {
                         ui.label(
                             RichText::new(format!("Dati locali: {}", util::human_size(size)))
                                 .size(12.0)
-                                .color(Palette::MUTED),
+                                .color(pal().muted),
                         );
                         if ui.small_button("Svuota cache").clicked() {
                             let _ = std::fs::remove_dir_all(&self.paths.media);
@@ -1070,9 +1070,47 @@ impl App {
 
                     ui.add_space(8.0);
                     ui.label(
+                        RichText::new("Aspetto")
+                            .size(11.0)
+                            .color(pal().faint),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "tema {} · {}",
+                                crate::theme::mode().label(),
+                                crate::theme::source()
+                            ))
+                            .size(12.0)
+                            .color(pal().muted),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        for (value, label) in [
+                            ("auto", "Automatico"),
+                            ("light", "Chiaro"),
+                            ("dark", "Scuro"),
+                        ] {
+                            let selected = self.config.theme == value;
+                            if ui
+                                .selectable_label(selected, RichText::new(label).size(12.0))
+                                .clicked()
+                            {
+                                self.config.theme = value.to_string();
+                                self.config.save(&self.paths.data);
+                                let (mode, source) = crate::theme::resolve(value);
+                                crate::theme::set(mode, source);
+                                crate::theme::apply(&self.ctx, self.config.system_fonts);
+                                self.ctx.request_repaint();
+                            }
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(
                         RichText::new("Contatti")
                             .size(11.0)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                     );
                     let named = self
                         .contacts
@@ -1086,7 +1124,7 @@ impl App {
                                 "{named} nomi in archivio · {total} chat dirette"
                             ))
                             .size(12.0)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                         );
                         if ui
                             .small_button("Rileggi nomi")
@@ -1116,7 +1154,7 @@ impl App {
                     ui.label(
                         RichText::new("Riproduzione")
                             .size(11.0)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                     );
                     ui.label(
                         RichText::new(if media::ffmpeg_available() {
@@ -1125,7 +1163,7 @@ impl App {
                             "ffmpeg: non trovato — audio e video si aprono con il player di sistema"
                         })
                         .size(12.0)
-                        .color(Palette::MUTED),
+                        .color(pal().muted),
                     );
 
                     ui.add_space(4.0);
@@ -1133,7 +1171,7 @@ impl App {
                         ui.label(
                             RichText::new("Fotocamera")
                                 .size(12.0)
-                                .color(Palette::MUTED),
+                                .color(pal().muted),
                         );
                         let mut camera = self.config.camera.clone();
                         if ui
@@ -1155,7 +1193,7 @@ impl App {
                                 "non trovata: video in sola ricezione"
                             })
                             .size(10.5)
-                            .color(if present { Palette::MUTED } else { Palette::FAINT }),
+                            .color(if present { pal().muted } else { pal().faint }),
                         );
                     });
 
@@ -1165,7 +1203,7 @@ impl App {
                             &mut system_player,
                             RichText::new("Usa il player di sistema per audio e video")
                                 .size(12.0)
-                                .color(Palette::TEXT),
+                                .color(pal().text),
                         )
                         .changed()
                     {
@@ -1180,7 +1218,7 @@ impl App {
                             &mut system_fonts,
                             RichText::new("Font di sistema come riserva (emoji, arabo, CJK)")
                                 .size(12.0)
-                                .color(Palette::TEXT),
+                                .color(pal().text),
                         )
                         .on_hover_text("Riavvia il caricamento dei font dai percorsi di sistema")
                         .changed()
@@ -1214,12 +1252,12 @@ impl App {
                     ui.label(
                         RichText::new("Whats-Open è un client indipendente, non affiliato a WhatsApp LLC.")
                             .size(10.5)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                     );
                     ui.hyperlink_to(
                         RichText::new("github.com/TixiGX/Whats-Open")
                             .size(11.0)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                         "https://github.com/TixiGX/Whats-Open",
                     );
 
@@ -1229,7 +1267,7 @@ impl App {
                             egui::Button::new(
                                 RichText::new("Esci e scollega").size(12.5),
                             )
-                            .fill(Palette::SURFACE)
+                            .fill(pal().surface)
                             .corner_radius(egui::CornerRadius::same(9)),
                         )
                         .clicked()
@@ -1255,7 +1293,7 @@ impl App {
                     ui.label(
                         RichText::new("Numero di telefono con prefisso internazionale")
                             .size(11.5)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                     );
                     ui.add_space(4.0);
                     ui.add(
@@ -1329,7 +1367,7 @@ impl App {
                     ui.label(
                         RichText::new("Inserisci il numero completo, senza zeri iniziali")
                             .size(11.5)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                     );
                     ui.add_space(4.0);
                     ui.add(
@@ -1372,7 +1410,7 @@ impl App {
                     ui.label(
                         RichText::new("Percorso completo del file da inviare")
                             .size(11.5)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                     );
                     ui.add_space(4.0);
                     ui.add(
@@ -1414,16 +1452,16 @@ impl App {
                             "La sessione verrà cancellata da questo computer. Potrai ricollegarla con un nuovo QR.",
                         )
                         .size(12.0)
-                        .color(Palette::MUTED),
+                        .color(pal().muted),
                     );
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("Scollega").size(12.5).color(Palette::DANGER),
+                                    RichText::new("Scollega").size(12.5).color(pal().danger),
                                 )
-                                .fill(Palette::SURFACE),
+                                .fill(pal().surface),
                             )
                             .clicked()
                         {

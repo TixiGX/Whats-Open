@@ -2,7 +2,7 @@
 
 use egui::{RichText, Vec2};
 
-use crate::theme::Palette;
+use crate::theme::pal;
 
 use super::{gfx, App, Conn};
 
@@ -32,23 +32,23 @@ impl App {
             }
 
             ui.add_space(14.0);
-            ui.label(RichText::new("Whats-Open").size(30.0).color(Palette::TEXT));
+            ui.label(RichText::new("Whats-Open").size(30.0).color(pal().text));
             ui.add_space(4.0);
             ui.label(
                 RichText::new("Un client WhatsApp nativo per Linux")
                     .size(13.0)
-                    .color(Palette::MUTED),
+                    .color(pal().muted),
             );
             ui.add_space(26.0);
 
             match self.conn {
                 Conn::Starting => {
-                    ui.add(egui::Spinner::new().size(26.0).color(Palette::TEXT));
+                    ui.add(egui::Spinner::new().size(26.0).color(pal().text));
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(&self.status_text)
                             .size(13.0)
-                            .color(Palette::MUTED),
+                            .color(pal().muted),
                     );
                 }
                 Conn::Qr => self.qr_card(ui),
@@ -73,8 +73,9 @@ impl App {
                             egui::Button::new(
                                 RichText::new("Collega con numero").size(13.0),
                             )
-                            .fill(Palette::SURFACE)
-                            .corner_radius(egui::CornerRadius::same(9)),
+                            .fill(pal().surface)
+                            .stroke(egui::Stroke::new(1.0, pal().border))
+                            .corner_radius(egui::CornerRadius::same(10)),
                         )
                         .clicked()
                     {
@@ -86,8 +87,9 @@ impl App {
                             egui::Button::new(
                                 RichText::new("Ricomincia").size(13.0),
                             )
-                            .fill(Palette::SURFACE)
-                            .corner_radius(egui::CornerRadius::same(9)),
+                            .fill(pal().surface)
+                            .stroke(egui::Stroke::new(1.0, pal().border))
+                            .corner_radius(egui::CornerRadius::same(10)),
                         )
                         .on_hover_text("Rigenera il codice di accesso")
                         .clicked()
@@ -102,13 +104,13 @@ impl App {
             ui.label(
                 RichText::new("Leggero · nativo · monocromatico · nessuna WebView")
                     .size(11.5)
-                    .color(Palette::FAINT),
+                    .color(pal().faint),
             );
             ui.add_space(6.0);
             ui.label(
                 RichText::new(format!("versione {}", env!("CARGO_PKG_VERSION")))
                     .size(11.0)
-                    .color(Palette::FAINT),
+                    .color(pal().faint),
             );
         });
     }
@@ -138,6 +140,12 @@ impl App {
             egui::CornerRadius::same(16),
             egui::Color32::WHITE,
         );
+        ui.painter().rect_stroke(
+            card,
+            egui::CornerRadius::same(16),
+            egui::Stroke::new(1.0, pal().border),
+            egui::StrokeKind::Inside,
+        );
         if let Some(texture) = self.qr_tex.as_ref() {
             let qr = egui::Rect::from_center_size(card.center(), Vec2::splat(side));
             egui::Image::new(egui::load::SizedTexture::new(texture.id(), qr.size()))
@@ -148,13 +156,13 @@ impl App {
         ui.label(
             RichText::new("WhatsApp → Dispositivi collegati → Collega un dispositivo")
                 .size(12.5)
-                .color(Palette::MUTED),
+                .color(pal().muted),
         );
         ui.add_space(4.0);
         ui.label(
             RichText::new("Il codice si rinnova da solo ogni 20 secondi")
                 .size(11.0)
-                .color(Palette::FAINT),
+                .color(pal().faint),
         );
         ui.add_space(10.0);
         ui.label(
@@ -165,7 +173,7 @@ impl App {
                  schermo deve essere inquadrato subito.",
             )
             .size(11.0)
-            .color(Palette::MUTED),
+            .color(pal().muted),
         );
     }
 
@@ -173,44 +181,44 @@ impl App {
         let code = self.qr_code.clone();
         let pretty = pretty_code(&code);
         egui::Frame::new()
-            .fill(Palette::SURFACE)
-            .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+            .fill(pal().surface)
+            .stroke(egui::Stroke::new(1.0, pal().border))
             .corner_radius(egui::CornerRadius::same(16))
             .inner_margin(egui::Margin::symmetric(34, 22))
             .show(ui, |ui| {
                 ui.label(
                     RichText::new("Codice di accoppiamento")
                         .size(11.5)
-                        .color(Palette::MUTED),
+                        .color(pal().muted),
                 );
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new(&pretty)
                         .size(31.0)
                         .monospace()
-                        .color(Palette::WHITE),
+                        .color(pal().white),
                 );
             });
         ui.add_space(14.0);
         ui.label(
             RichText::new("Sul telefono: Dispositivi collegati → Collega con numero")
                 .size(12.5)
-                .color(Palette::MUTED),
+                .color(pal().muted),
         );
         if let Some(phone) = self.pair_phone.as_deref() {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(format!("Numero: +{}", digits(phone)))
                     .size(11.5)
-                    .color(Palette::FAINT),
+                    .color(pal().faint),
             );
         }
     }
 
     fn error_card(&mut self, ui: &mut egui::Ui) {
         egui::Frame::new()
-            .fill(Palette::SURFACE)
-            .stroke(egui::Stroke::new(1.0, Palette::BORDER))
+            .fill(pal().surface)
+            .stroke(egui::Stroke::new(1.0, pal().border))
             .corner_radius(egui::CornerRadius::same(14))
             .inner_margin(egui::Margin::symmetric(24, 18))
             .show(ui, |ui| {
@@ -219,13 +227,13 @@ impl App {
                     ui.label(
                         RichText::new("Qualcosa non ha funzionato")
                             .size(15.0)
-                            .color(Palette::TEXT),
+                            .color(pal().text),
                     );
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new(crate::util::truncate(&self.status_text, 300))
                             .size(12.0)
-                            .color(Palette::DANGER),
+                            .color(pal().danger),
                     );
                 });
             });
@@ -237,7 +245,7 @@ impl App {
             if ui
                 .add(
                     egui::Button::new(RichText::new("Riprova").size(13.0))
-                        .fill(Palette::SURFACE)
+                        .fill(pal().surface)
                         .corner_radius(egui::CornerRadius::same(9)),
                 )
                 .clicked()
@@ -247,7 +255,7 @@ impl App {
             if ui
                 .add(
                     egui::Button::new(RichText::new("Cancella la sessione").size(13.0))
-                        .fill(Palette::SURFACE)
+                        .fill(pal().surface)
                         .corner_radius(egui::CornerRadius::same(9)),
                 )
                 .on_hover_text("Utile se l'archivio della sessione è danneggiato")

@@ -417,7 +417,7 @@ impl Icon {
             ui.painter().rect_filled(
                 rect.expand(2.0),
                 egui::CornerRadius::same((size * 0.5) as u8),
-                crate::theme::Palette::HOVER,
+                crate::theme::pal().hover,
             );
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -426,11 +426,31 @@ impl Icon {
             ui,
             glyph,
             if hovered {
-                crate::theme::Palette::WHITE
+                crate::theme::pal().white
             } else {
                 color
             },
         );
+        response
+    }
+
+    /// Bottone pieno e tondo: serve al pollice dell'invio, dove il cerchio
+    /// pieno dice "premi qui" meglio di un'icona nuda.
+    pub fn filled_button(self, ui: &mut Ui, size: f32, icon: Color32, fill: Color32) -> Response {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+        let hovered = response.hovered();
+        let radius = size * 0.5;
+        ui.painter().circle_filled(rect.center(), radius, fill);
+        if hovered {
+            ui.painter().circle_stroke(
+                rect.center(),
+                radius,
+                Stroke::new(1.0, crate::theme::pal().muted),
+            );
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let glyph = Rect::from_center_size(rect.center(), Vec2::splat(size * 0.56));
+        self.paint(ui, glyph, icon);
         response
     }
 }

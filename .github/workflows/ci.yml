@@ -273,6 +273,18 @@ jobs:
             echo "== --doctor =="
             HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
               XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
+            echo "== --audio-check =="
+            cat > smoke/alsa-null.conf <<'EOF'
+pcm.!default { type null }
+ctl.!default { type null }
+EOF
+            audio_ok=0
+            if ALSA_CONFIG_PATH="$PWD/smoke/alsa-null.conf" \
+              HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --audio-check; then
+              audio_ok=1
+            fi
+            echo "audio-check ok: $audio_ok"
             echo "== --video-check =="
             video_ok=0
             if HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
@@ -339,6 +351,26 @@ jobs:
           fi
           import -display :99 -window root smoke/narrow.png 2> smoke/narrow.err
           kill "$narrow" 2>/dev/null
+          sleep 1
+
+          # Quarta istanza: tema chiaro, per vedere che la tavolozza segua il
+          # desktop invece di essere solo scura.
+          mkdir -p smoke/lhome smoke/ldata smoke/lcache smoke/lruntime
+          chmod 700 smoke/lruntime
+          HOME="$PWD/smoke/lhome" XDG_RUNTIME_DIR="$PWD/smoke/lruntime" \
+            XDG_DATA_HOME="$PWD/smoke/ldata" XDG_CACHE_HOME="$PWD/smoke/lcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_THEME=light \
+            "$bin" > smoke/lout.log 2> smoke/lerr.log &
+          light=$!
+          sleep 8
+          if kill -0 "$light" 2>/dev/null; then
+            echo "== tema chiaro: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== tema chiaro: uscita da sola ==" >> smoke.log
+            tail -10 smoke/lerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/light.png 2> smoke/light.err
+          kill "$light" 2>/dev/null
 
           shot=""
           dshot=""
@@ -379,6 +411,10 @@ jobs:
           else
             video_failed=0
           fi
+          if [ "${audio_ok:-0}" != "1" ]; then
+            echo "::error::--audio-check non è passato: microfono, casse o silenzio di riserva non funzionano"
+            video_failed=1
+          fi
           {
             echo "collaudo del binario"
             echo
@@ -415,6 +451,7 @@ jobs:
             smoke/shot.png
             smoke/demo.png
             smoke/narrow.png
+            smoke/light.png
           if-no-files-found: ignore
           retention-days: 7
 

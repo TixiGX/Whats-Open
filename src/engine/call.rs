@@ -38,16 +38,164 @@ impl CallAudio {
     }
 }
 
-/// Apre microfono e casse. Fallisce solo se non esiste alcun dispositivo.
-pub fn start() -> Result<CallAudio, String> {
+/// Apre microfono e casse. Non fallisce mai per colpa dell'hardware: se una
+/// delle due parti manca si usa un canale di silenzio, così la chiamata parte
+/// comunque e l'utente viene avvertito di cosa non funzionerà.
+pub fn start() -> (CallAudio, Option<String>) {
     let mute = Arc::new(AtomicBool::new(false));
-    let mic = start_mic(mute.clone())?;
-    let speaker = start_speaker()?;
-    Ok(CallAudio {
-        mic,
-        speaker,
-        mute,
-    })
+    let mut missing: Vec<String> = Vec::new();
+
+    let mic = match start_mic(mute.clone()) {
+        Ok(mic) => mic,
+        Err(error) => {
+            log::warn!("microfono: {error}");
+            missing.push(format!(
+                "microfono non disponibile ({error}): l'altro non ti sentirà"
+            ));
+            silent_mic()
+        }
+    };
+    let speaker = match start_speaker() {
+        Ok(speaker) => speaker,
+        Err(error) => {
+            log::warn!("casse: {error}");
+            missing.push(format!(
+                "casse non disponibili ({error}): non sentirai l'altro"
+            ));
+            silent_speaker()
+        }
+    };
+    let warning = if missing.is_empty() {
+        None
+    } else {
+        Some(format!("Audio incompleto — {}", missing.join("; ")))
+    };
+    (
+        CallAudio {
+            mic,
+            speaker,
+            mute,
+        },
+        warning,
+    )
+}
+
+/// Nomi dei dispositivi audio usati, per `--audio-check`.
+pub fn device_names() -> (Option<String>, Option<String>) {
+    let mic = pick_device(true).and_then(|device| device.name().ok());
+    let speaker = pick_device(false).and_then(|device| device.name().ok());
+    (mic, speaker)
+}
+
+/// Prova del percorso audio senza rete: ricampionatori, apertura dei
+/// dispositivi e — se non ce ne sono — il silenzio di riserva.
+pub fn self_test() -> Result<String, String> {
+    let mut down = Down::new(48_000);
+    let mut out: Vec<i16> = Vec::new();
+    for _ in 0..4_800 {
+        down.push(0.1, &mut out);
+    }
+    if !(1_500..=1_700).contains(&out.len()) {
+        return Err(format!(
+            "ricampionamento 48→16 kHz: {} campioni invece di ~1600",
+            out.len()
+        ));
+    }
+    let mut up = Up::new(48_000);
+    let mut queue: VecDeque<i16> = (0..4_800).map(|index| (index % 100) as i16).collect();
+    let mut values = 0usize;
+    for _ in 0..12_000 {
+        let value = up.next(&mut queue);
+        if value.is_finite() {
+            values += 1;
+        }
+    }
+    if values != 12_000 {
+        return Err("ricampionamento 16→48 kHz: valori non finiti".to_string());
+    }
+
+    let (audio, warning) = start();
+    let deadline = std::time::Instant::now() + Duration::from_millis(1_500);
+    let mut frames = 0;
+    while std::time::Instant::now() < deadline && frames < 2 {
+        if audio.mic.try_recv().is_ok() {
+            frames += 1;
+        } else {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let _ = audio.speaker.try_send(vec![0i16; FRAME]);
+    if frames == 0 {
+        return Err("nessun frame dal microfono (nemmeno di riserva)".to_string());
+    }
+    let (mic, speaker) = device_names();
+    let mut report = format!(
+        "microfono: {} · casse: {} · {frames} frame da 60 ms pronti",
+        mic.unwrap_or_else(|| "silenzio di riserva".to_string()),
+        speaker.unwrap_or_else(|| "silenzio di riserva".to_string()),
+    );
+    if let Some(warning) = warning {
+        report.push_str(" · ");
+        report.push_str(&warning);
+    }
+    Ok(report)
+}
+
+/// Sceglie un dispositivo con una configurazione utilizzabile, non solo il
+/// primo della lista: in una VM il predefinito può esistere e non funzionare.
+fn pick_device(input: bool) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    let usable = |device: &cpal::Device| {
+        if input {
+            device.default_input_config().is_ok()
+        } else {
+            device.default_output_config().is_ok()
+        }
+    };
+    let default = if input {
+        host.default_input_device()
+    } else {
+        host.default_output_device()
+    };
+    if let Some(device) = default {
+        if usable(&device) {
+            return Some(device);
+        }
+        log::warn!("dispositivo audio predefinito non utilizzabile: ne cerco un altro");
+    }
+    let devices = if input {
+        host.input_devices().ok()?.collect::<Vec<_>>()
+    } else {
+        host.output_devices().ok()?.collect::<Vec<_>>()
+    };
+    devices.into_iter().find(|device| usable(device))
+}
+
+/// Canale di silenzio: la chiamata esiste, semplicemente non c'è microfono.
+fn silent_mic() -> Receiver<Vec<i16>> {
+    let (tx, rx) = bounded::<Vec<i16>>(8);
+    std::thread::Builder::new()
+        .name("whats-open-mic-silence".into())
+        .spawn(move || {
+            while !tx.is_closed() {
+                if tx.send_blocking(vec![0i16; FRAME]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(60));
+            }
+        })
+        .ok();
+    rx
+}
+
+/// Le casse mancano: si riceve, si scarta, la chiamata prosegue.
+fn silent_speaker() -> Sender<Vec<i16>> {
+    let (tx, rx) = bounded::<Vec<i16>>(32);
+    std::thread::Builder::new()
+        .name("whats-open-speaker-silence".into())
+        .spawn(move || while rx.recv_blocking().is_ok() {})
+        .ok();
+    tx
 }
 
 /// Ricampionatore lineare `src → 16 kHz` usato nel callback del microfono.
@@ -131,13 +279,10 @@ impl Up {
 }
 
 fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "Nessun microfono disponibile".to_string())?;
+    let device = pick_device(true).ok_or_else(|| "nessun microfono".to_string())?;
     let supported = device
         .default_input_config()
-        .map_err(|err| format!("Microfono: {err}"))?;
+        .map_err(|err| format!("configurazione: {err}"))?;
     let format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
     let channels = config.channels as usize;
@@ -150,6 +295,9 @@ fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
     let stream_queue = queue.clone();
     let stream_tx = tx.clone();
     let stream_alive = alive.clone();
+    // Il thread dice subito se lo stream è davvero partito: così un errore
+    // arriva prima dell'offerta, non come una chiamata muta.
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     std::thread::Builder::new()
         .name("whats-open-mic".into())
         .spawn(move || {
@@ -209,28 +357,38 @@ fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
                 cpal::SampleFormat::U32 => build!(u32),
                 cpal::SampleFormat::F64 => build!(f64),
                 other => {
-                    log::warn!("formato microfono non supportato: {other}");
+                    let _ = ready_tx.send(Err(format!("formato {other} non supportato")));
                     stream_alive.store(false, Ordering::Relaxed);
                     return;
                 }
             };
 
-            let Ok(stream) = stream else {
-                log::warn!("microfono: impossibile aprire lo stream");
-                stream_alive.store(false, Ordering::Relaxed);
-                return;
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(err) => {
+                    let _ = ready_tx.send(Err(format!("impossibile aprire: {err}")));
+                    stream_alive.store(false, Ordering::Relaxed);
+                    return;
+                }
             };
             if let Err(err) = stream.play() {
-                log::warn!("avvio microfono: {err}");
+                let _ = ready_tx.send(Err(format!("avvio: {err}")));
                 stream_alive.store(false, Ordering::Relaxed);
                 return;
             }
+            let _ = ready_tx.send(Ok(()));
             while !stream_tx.is_closed() && stream_alive.load(Ordering::Relaxed) {
                 std::thread::park_timeout(Duration::from_millis(200));
             }
             drop(stream);
         })
-        .map_err(|err| format!("Thread microfono: {err}"))?;
+        .map_err(|err| format!("thread: {err}"))?;
+
+    match ready_rx.recv_timeout(Duration::from_millis(1_500)) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error),
+        Err(_) => log::warn!("microfono: apertura lenta, proseguo"),
+    }
 
     // Impacchetta i campioni in frame da 60 ms e li consegna al motore.
     let drain_queue = queue;
@@ -268,13 +426,10 @@ fn start_mic(mute: Arc<AtomicBool>) -> Result<Receiver<Vec<i16>>, String> {
 }
 
 fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| "Nessun dispositivo audio in uscita".to_string())?;
+    let device = pick_device(false).ok_or_else(|| "nessuna uscita audio".to_string())?;
     let supported = device
         .default_output_config()
-        .map_err(|err| format!("Casse: {err}"))?;
+        .map_err(|err| format!("configurazione: {err}"))?;
     let format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
     let channels = config.channels as usize;
@@ -285,6 +440,7 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
 
     let stream_queue = queue.clone();
     let alive = tx.clone();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     std::thread::Builder::new()
         .name("whats-open-speaker".into())
         .spawn(move || {
@@ -324,24 +480,35 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
                 cpal::SampleFormat::U32 => build!(u32),
                 cpal::SampleFormat::F64 => build!(f64),
                 other => {
-                    log::warn!("formato casse non supportato: {other}");
+                    let _ = ready_tx.send(Err(format!("formato {other} non supportato")));
                     return;
                 }
             };
 
-            let Ok(stream) = stream else {
-                return;
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(err) => {
+                    let _ = ready_tx.send(Err(format!("impossibile aprire: {err}")));
+                    return;
+                }
             };
             if let Err(err) = stream.play() {
-                log::warn!("avvio casse: {err}");
+                let _ = ready_tx.send(Err(format!("avvio: {err}")));
                 return;
             }
+            let _ = ready_tx.send(Ok(()));
             while !alive.is_closed() {
                 std::thread::park_timeout(Duration::from_millis(200));
             }
             drop(stream);
         })
-        .map_err(|err| format!("Thread casse: {err}"))?;
+        .map_err(|err| format!("thread: {err}"))?;
+
+    match ready_rx.recv_timeout(Duration::from_millis(1_500)) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error),
+        Err(_) => log::warn!("casse: apertura lenta, proseguo"),
+    }
 
     // Trasferisce l'audio decodificato nella coda letta dalle casse.
     let drain_queue = queue;
@@ -369,6 +536,7 @@ fn start_speaker() -> Result<Sender<Vec<i16>>, String> {
 
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::schemas;
+use whatsapp_rust::CallError;
 use whatsapp_rust::types::call::{CallAction, IncomingCall};
 use whatsapp_rust::waproto::buffa::MessageField;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -477,28 +645,10 @@ pub async fn accept(
     };
     let peer = incoming.from.to_string();
     let offered_video = matches!(&incoming.action, CallAction::Offer { is_video: true, .. });
-    let audio = match start() {
-        Ok(audio) => audio,
-        Err(err) => {
-            log::warn!("audio chiamata in arrivo: {err}");
-            emit(
-                &sink,
-                Event::Notice(format!("Chiamata rifiutata: {err}")),
-            );
-            let _ = client.voip().reject(&incoming).await;
-            let mut session = state.lock().await;
-            session.incoming = None;
-            emit(
-                &sink,
-                Event::Call {
-                    phase: CallPhase::Ended,
-                    peer,
-                    video: offered_video,
-                },
-            );
-            return;
-        }
-    };
+    let (audio, audio_warning) = start();
+    if let Some(warning) = audio_warning {
+        emit(&sink, Event::Notice(warning));
+    }
 
     let mut media = None;
     if with_video && !offered_video {
@@ -557,7 +707,7 @@ pub async fn accept(
             session.media = None;
             emit(
                 &sink,
-                Event::Notice(format!("Chiamata non accettata: {err}")),
+                Event::Notice(format!("Chiamata non accettata: {}", call_error_text(&err))),
             );
             emit(
                 &sink,
@@ -586,31 +736,24 @@ pub async fn start_outgoing(
         emit(&sink, Event::Notice("Indirizzo non valido".into()));
         return;
     };
-    {
-        let session = state.lock().await;
-        if session.handle.is_some() || session.incoming.is_some() {
+    let stale_incoming = {
+        let mut session = state.lock().await;
+        if session.handle.is_some() {
             emit(&sink, Event::Notice("Sei già in una chiamata".into()));
             return;
         }
-    }
-    let audio = match start() {
-        Ok(audio) => audio,
-        Err(err) => {
-            log::warn!("audio chiamata in uscita: {err}");
-            // Microfono o casse non disponibili: si dice e si chiude, senza
-            // lasciare a schermo una chiamata che non esiste.
-            emit(
-                &sink,
-                Event::Call {
-                    phase: CallPhase::Ended,
-                    peer: chat,
-                    video,
-                },
-            );
-            emit(&sink, Event::Notice(format!("Chiamata non avviata: {err}")));
-            return;
-        }
+        // Un'offerta rimasta appesa (l'altro ha riattaccato senza che
+        // arrivasse il terminate) non deve impedire di chiamare per sempre.
+        session.incoming.take()
     };
+    if let Some(stale) = stale_incoming {
+        log::info!("offerta rimasta in sospeso: la chiudo prima di chiamare");
+        let _ = client.voip().reject(&stale).await;
+    }
+    let (audio, audio_warning) = start();
+    if let Some(warning) = audio_warning {
+        emit(&sink, Event::Notice(warning));
+    }
 
     let mut media = None;
     let mut video = video;
@@ -676,7 +819,7 @@ pub async fn start_outgoing(
             );
             emit(
                 &sink,
-                Event::Notice(format!("Chiamata non riuscita: {err}")),
+                Event::Notice(format!("Chiamata non riuscita: {}", call_error_text(&err))),
             );
         }
     }
@@ -784,6 +927,45 @@ async fn monitor(
             video,
         },
     );
+}
+
+/// Traduce gli errori della libreria in una frase che dice cosa fare.
+/// Il testo tecnico resta nel log, dove serve a chi sviluppa.
+fn call_error_text(err: &CallError) -> String {
+    match err {
+        CallError::NoDevices => {
+            "Nessun dispositivo raggiungibile per questo contatto".to_string()
+        }
+        CallError::MissingDeviceIdentity => {
+            "Il telefono non ha ancora autorizzato le chiamate da questo dispositivo: \
+             apri WhatsApp sul telefono e riprova"
+                .to_string()
+        }
+        CallError::ResponseTimeout => {
+            "Il servizio chiamate non ha risposto in tempo: riprova tra qualche secondo".to_string()
+        }
+        CallError::Response(text) => {
+            format!("Il servizio ha rifiutato la chiamata ({text})")
+        }
+        CallError::Media("no known LID for the PN callee; cannot derive media keys") => {
+            "Numero non ancora sincronizzato: scrivi prima un messaggio a questo contatto, poi riprova"
+                .to_string()
+        }
+        CallError::Media("no own LID") => {
+            "La sessione non ha ancora il tuo identificativo: riavvia Whats-Open e riprova".to_string()
+        }
+        CallError::Media(text) => format!("Dati della chiamata incompleti ({text})"),
+        CallError::Setup(text) => format!("Preparazione della chiamata non riuscita ({text})"),
+        CallError::Connect(text) => format!("Connessione audio non riuscita ({text})"),
+        CallError::AudioFormatNotOffered(rate) => {
+            format!("L'altro non accetta l'audio a {rate} Hz: aggiorna Whats-Open")
+        }
+        CallError::VideoNotOffered => {
+            "L'altro ha chiamato solo in audio: riaggancia e richiama in vocale".to_string()
+        }
+        CallError::CallEndedDuringSetup => "L'altro ha chiuso prima della risposta".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Scrive una voce nel registro chiamate del telefono (`WAWebCallLogSync`).

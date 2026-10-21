@@ -2,7 +2,7 @@
 
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Ui, Vec2};
 
-use crate::theme::Palette;
+use crate::theme::pal;
 
 pub fn initials(name: &str, id: &str) -> String {
     crate::util::initials(&crate::util::display_name(name, id))
@@ -19,10 +19,10 @@ pub fn avatar(
 ) {
     let center = rect.center();
     let radius = rect.width().min(rect.height()) * 0.5;
-    painter.circle_filled(center, radius, Palette::SURFACE);
+    painter.circle_filled(center, radius, pal().surface);
 
     if is_group {
-        let dark = Palette::MUTED;
+        let dark = pal().muted;
         for (dx, dy, r) in [(-0.20f32, -0.08f32, 0.16f32), (0.0, -0.20, 0.18), (0.22, -0.04, 0.16)] {
             painter.circle_filled(
                 Pos2::new(center.x + radius * dx, center.y + radius * dy),
@@ -48,14 +48,14 @@ pub fn avatar(
             Align2::CENTER_CENTER,
             text,
             FontId::proportional(size),
-            Palette::TEXT,
+            pal().text,
         );
     }
 
     if online {
         let dot = Pos2::new(rect.right() - radius * 0.22, rect.bottom() - radius * 0.22);
-        painter.circle_filled(dot, (radius * 0.24).max(2.5), Palette::BG);
-        painter.circle_filled(dot, (radius * 0.18).max(2.0), Palette::ONLINE);
+        painter.circle_filled(dot, (radius * 0.24).max(2.5), pal().bg);
+        painter.circle_filled(dot, (radius * 0.18).max(2.0), pal().online);
     }
 }
 
@@ -85,8 +85,8 @@ pub fn avatar_tex(
                     rect.right() - radius * 0.22,
                     rect.bottom() - radius * 0.22,
                 );
-                painter.circle_filled(dot, (radius * 0.24).max(2.5), Palette::BG);
-                painter.circle_filled(dot, (radius * 0.18).max(2.0), Palette::ONLINE);
+                painter.circle_filled(dot, (radius * 0.24).max(2.5), pal().bg);
+                painter.circle_filled(dot, (radius * 0.18).max(2.0), pal().online);
             }
         }
         None => avatar(ui.painter(), rect, name, id, is_group, online),
@@ -103,17 +103,17 @@ pub fn day_separator(ui: &mut Ui, label: &str) {
         let text = painter.layout_no_wrap(
             label.to_string(),
             FontId::proportional(11.5),
-            Palette::MUTED,
+            pal().muted,
         );
         let size = text.size();
         let center = rect.center();
         let pad = Vec2::new(10.0, 4.0);
         let plate = Rect::from_center_size(center, size + pad * 2.0);
-        painter.rect_filled(plate, egui::CornerRadius::same(9), Palette::SURFACE);
+        painter.rect_filled(plate, egui::CornerRadius::same(9), pal().surface);
         painter.galley(
             Pos2::new(center.x - size.x * 0.5, center.y - size.y * 0.5),
             text,
-            Palette::MUTED,
+            pal().muted,
         );
     });
     ui.add_space(4.0);

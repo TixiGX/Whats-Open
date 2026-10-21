@@ -42,11 +42,35 @@ fn main() -> anyhow::Result<()> {
         println!("Whats-Open {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if let Some(value) = parse_theme(&args) {
+        // La variabile d'ambiente è la strada che legge anche `theme::detect`,
+        // così CLI e interfaccia raccontano la stessa verità.
+        std::env::set_var("WHATS_OPEN_THEME", value);
+    }
+    let config = config::Config::load(&paths.data);
+    let (mode, source) = theme::resolve(&config.theme);
+    theme::set(mode, source);
+
     if args
         .iter()
         .any(|arg| arg == "--doctor" || arg == "--diagnostica")
     {
         println!("{}", platform::report(&paths));
+        println!(
+            "tema          : {} ({})",
+            theme::mode().label(),
+            theme::source()
+        );
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--audio-check") {
+        match engine::call::self_test() {
+            Ok(report) => println!("audio: {report}"),
+            Err(error) => {
+                eprintln!("audio: {error}");
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
     if args.iter().any(|arg| arg == "--video-check") {
@@ -142,13 +166,32 @@ fn print_help() {
          \x20 --pair, --accoppia <numero>  collega con un codice a 8 caratteri\n\
          \x20 --doctor, --diagnostica      stampa l'ambiente e le dipendenze trovate\n\
          \x20 --video-check                prova il percorso video delle chiamate\n\
+         \x20 --audio-check                prova microfono e casse (o il silenzio di riserva)\n\
+         \x20 --theme <auto|light|dark>    forza il tema, ignorando quello del desktop\n\
          \x20 --version                    versione\n\
          \x20 --help                       questo testo\n\n\
          Variabili d'ambiente:\n\
          \x20 WHATS_OPEN_NO_SYSTEM_FONTS=1  usa solo i font incorporati\n\
+         \x20 WHATS_OPEN_THEME=light|dark   forza il tema\n\
+         \x20 WHATS_OPEN_WINDOW=560x430      dimensione iniziale della finestra\n\
          \x20 WINIT_UNIX_BACKEND=x11|wayland  forza il backend grafico\n",
         env!("CARGO_PKG_VERSION")
     );
+}
+
+fn parse_theme(args: &[String]) -> Option<String> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--theme" {
+            return args.get(index + 1).cloned();
+        }
+        if let Some(value) = arg.strip_prefix("--theme=") {
+            return Some(value.to_string());
+        }
+        index += 1;
+    }
+    None
 }
 
 fn parse_pair_number(args: &[String]) -> Option<String> {

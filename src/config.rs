@@ -19,6 +19,8 @@ pub struct Config {
     pub graceful_exit: bool,
     /// Dispositivo della fotocamera per le videochiamate (`/dev/video0`).
     pub camera: String,
+    /// Tema: `auto` segue il desktop, altrimenti `dark` o `light`.
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -28,6 +30,7 @@ impl Default for Config {
             system_fonts: true,
             graceful_exit: true,
             camera: "/dev/video0".to_string(),
+            theme: "auto".to_string(),
         }
     }
 }

@@ -7,7 +7,7 @@ use egui::{Color32, RichText, Sense, TextureHandle, Vec2};
 use crate::engine::Cmd;
 use crate::media;
 use crate::model::{Kind, Message, Quote, Status};
-use crate::theme::Palette;
+use crate::theme::pal;
 use crate::util;
 
 use super::{widgets, Action, App};
@@ -69,15 +69,15 @@ impl App {
 
         if self.reconnecting {
             egui::Frame::new()
-                .fill(Palette::SURFACE)
+                .fill(pal().surface)
                 .inner_margin(egui::Margin::symmetric(12, 6))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.add(egui::Spinner::new().size(12.0).color(Palette::MUTED));
+                        ui.add(egui::Spinner::new().size(12.0).color(pal().muted));
                         ui.label(
                             RichText::new(format!("Riconnessione… {}", self.status_text))
                                 .size(11.5)
-                                .color(Palette::MUTED),
+                                .color(pal().muted),
                         );
                     });
                 });
@@ -107,13 +107,13 @@ impl App {
                 ui.label(
                     RichText::new("Scegli una conversazione")
                         .size(14.0)
-                        .color(Palette::MUTED),
+                        .color(pal().muted),
                 );
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new("oppure avviane una nuova con +")
                         .size(11.5)
-                        .color(Palette::FAINT),
+                        .color(pal().faint),
                 );
             });
         }
@@ -131,13 +131,13 @@ impl App {
         let mut place_call: Option<bool> = None;
 
         egui::Frame::new()
-            .fill(Palette::PANEL)
-            .inner_margin(egui::Margin::symmetric(10, 7))
+            .fill(pal().panel)
+            .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if narrow
                         && crate::icons::Icon::Back
-                            .button(ui, 30.0, Palette::TEXT)
+                            .button(ui, 30.0, pal().text)
                             .on_hover_text("Torna alle chat")
                             .clicked()
                     {
@@ -164,7 +164,7 @@ impl App {
                             RichText::new(&title)
                                 .size(15.0)
                                 .strong()
-                                .color(Palette::TEXT),
+                                .color(pal().text),
                         );
                         let mut subtitle = if chat.typing {
                             "sta scrivendo…".to_string()
@@ -191,9 +191,9 @@ impl App {
                                 RichText::new(util::truncate(&subtitle, 58))
                                     .size(11.0)
                                     .color(if chat.typing {
-                                        Palette::TEXT
+                                        pal().text
                                     } else {
-                                        Palette::MUTED
+                                        pal().muted
                                     }),
                             );
                         }
@@ -202,7 +202,7 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(2.0);
                         let enabled = !chat.is_group && !in_call;
-                        let color = if enabled { Palette::TEXT } else { Palette::FAINT };
+                        let color = if enabled { pal().text } else { pal().faint };
                         let hover = if chat.is_group {
                             "Le chiamate di gruppo non sono supportate"
                         } else if in_call {
@@ -277,7 +277,7 @@ impl App {
                     ui.label(
                         RichText::new("Nessun messaggio. Scrivi qualcosa.")
                             .size(12.0)
-                            .color(Palette::FAINT),
+                            .color(pal().faint),
                     );
                 });
             }
@@ -294,7 +294,9 @@ impl App {
             return;
         }
         let bubble = Bubble::from(&self.messages[index]);
-        let max_width = (ui.available_width() * 0.76).clamp(170.0, 560.0);
+        // Larghezza giusta: le righe non corrono da un bordo all'altro, ma i
+        // messaggi brevi restano stretti invece di allargarsi a vuoto.
+        let max_width = (ui.available_width() * 0.72).clamp(200.0, 520.0);
 
         let layout = if bubble.own {
             egui::Layout::right_to_left(egui::Align::Max)
@@ -303,47 +305,89 @@ impl App {
         };
 
         ui.with_layout(layout, |ui| {
-            ui.add_space(11.0);
+            ui.add_space(12.0);
             self.bubble_frame(ui, index, &bubble, max_width);
         });
-        ui.add_space(3.0);
+        ui.add_space(4.0);
+    }
+
+    /// Larghezza del contenuto (senza i margini del fumetto): si misura il
+    /// testo con lo stesso font che verrà disegnato, così un "ok" resta un
+    /// fumetto da due dita e un paragrafo arriva al massimo stabilito.
+    fn bubble_width(&mut self, ui: &egui::Ui, index: usize, bubble: &Bubble, max_width: f32) -> Option<f32> {
+        if bubble.kind == Kind::Sticker && !bubble.view_once {
+            return None;
+        }
+        let room = (max_width - 22.0).max(80.0);
+        let mut width: f32 = 62.0;
+        let mut text = bubble.text.as_str();
+        if bubble.kind == Kind::Text && bubble.view_once {
+            text = "";
+        }
+        if !text.is_empty() {
+            let size = if bubble.kind == Kind::Text { 14.0 } else { 13.5 };
+            width = width.max(measure_text(ui, text, size, room));
+        }
+        match bubble.kind {
+            Kind::Image | Kind::Video | Kind::Gif => {
+                width = width.max(if self.thumb_texture(index).is_some() {
+                    268.0
+                } else {
+                    224.0
+                });
+            }
+            Kind::Voice => width = width.max(248.0),
+            Kind::Audio => width = width.max(238.0),
+            Kind::Document => width = width.max(258.0),
+            Kind::Location | Kind::Contact => width = width.max(196.0),
+            _ => {}
+        }
+        if let Some(quote) = bubble.quote.as_ref() {
+            let quoted = measure_text(ui, &util::truncate(&quote.text, 70), 11.0, (room - 16.0).max(60.0));
+            width = width.max(quoted + 16.0);
+        }
+        Some(width.clamp(62.0, room))
     }
 
     fn bubble_frame(&mut self, ui: &mut egui::Ui, index: usize, bubble: &Bubble, max_width: f32) {
         // Gli sticker non stanno in una bolla: si vedono come su WhatsApp.
         let bare = bubble.kind == Kind::Sticker && !bubble.view_once;
+        let content_width = self.bubble_width(ui, index, bubble, max_width);
         let fill = if bare {
             Color32::TRANSPARENT
         } else if bubble.own {
-            Palette::OWN_BUBBLE
+            pal().own_bubble
         } else {
-            Palette::IN_BUBBLE
+            pal().in_bubble
         };
         let text_color = if bubble.own && !bare {
-            Palette::OWN_TEXT
+            pal().own_text
         } else {
-            Palette::IN_TEXT
+            pal().in_text
         };
         let muted = if bubble.own && !bare {
-            Color32::from_gray(120)
+            crate::theme::mix(pal().own_text, pal().own_bubble, 0.44)
         } else {
-            Palette::MUTED
+            pal().muted
         };
         let faint = if bubble.own && !bare {
-            Color32::from_gray(180)
+            crate::theme::mix(pal().own_text, pal().own_bubble, 0.30)
         } else {
-            Color32::from_gray(110)
+            pal().faint
         };
 
         let response = egui::Frame::new()
             .fill(fill)
-            .corner_radius(egui::CornerRadius::same(if bare { 0 } else { 12 }))
+            .corner_radius(egui::CornerRadius::same(if bare { 0 } else { 14 }))
             .inner_margin(egui::Margin::symmetric(
-                if bare { 0 } else { 10 },
-                if bare { 2 } else { 7 },
+                if bare { 0 } else { 11 },
+                if bare { 2 } else { 8 },
             ))
             .show(ui, |ui| {
-                ui.set_max_width(max_width);
+                match content_width {
+                    Some(width) => ui.set_width(width),
+                    None => ui.set_max_width(max_width - 22.0),
+                }
 
                 if !bubble.own && self.messages[index].chat_id.ends_with("@g.us") {
                     let name = self.name_of(&bubble.sender);
@@ -354,9 +398,9 @@ impl App {
                 if let Some(quote) = bubble.quote.as_ref() {
                     egui::Frame::new()
                         .fill(if bubble.own {
-                            Color32::from_gray(222)
+                            crate::theme::mix(pal().own_bubble, pal().own_text, 0.10)
                         } else {
-                            Color32::from_gray(42)
+                            crate::theme::mix(pal().in_bubble, pal().in_text, 0.08)
                         })
                         .corner_radius(egui::CornerRadius::same(6))
                         .inner_margin(egui::Margin::symmetric(8, 5))
@@ -373,9 +417,9 @@ impl App {
                                         .size(10.5)
                                         .strong()
                                         .color(if bubble.own {
-                                            Color32::from_gray(60)
+                                            pal().own_text
                                         } else {
-                                            Palette::TEXT
+                                            pal().text
                                         }),
                                 );
                             }
@@ -383,9 +427,9 @@ impl App {
                                 RichText::new(util::truncate(&quote.text, 70))
                                     .size(11.0)
                                     .color(if bubble.own {
-                                        Color32::from_gray(70)
+                                        crate::theme::mix(pal().own_text, pal().own_bubble, 0.30)
                                     } else {
-                                        Palette::MUTED
+                                        pal().muted
                                     }),
                             );
                         });
@@ -436,7 +480,7 @@ impl App {
             let galley = ui.painter().layout_no_wrap(
                 reaction.clone(),
                 egui::FontId::proportional(11.0),
-                Palette::TEXT,
+                pal().text,
             );
             let size = Vec2::new(galley.size().x + 14.0, galley.size().y + 5.0);
             let left = if bubble.own {
@@ -449,15 +493,15 @@ impl App {
                 size,
             );
             ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(8), Palette::PANEL);
+                .rect_filled(rect, egui::CornerRadius::same(8), pal().panel);
             ui.painter().rect_stroke(
                 rect,
                 egui::CornerRadius::same(8),
-                egui::Stroke::new(1.0, Palette::BORDER),
+                egui::Stroke::new(1.0, pal().border),
                 egui::StrokeKind::Inside,
             );
             ui.painter()
-                .galley(rect.min + Vec2::new(7.0, 2.5), galley, Palette::TEXT);
+                .galley(rect.min + Vec2::new(7.0, 2.5), galley, pal().text);
             ui.add_space(7.0);
         }
 
@@ -468,7 +512,7 @@ impl App {
                         egui::Label::new(
                             RichText::new("non inviato · riprova")
                                 .size(10.0)
-                                .color(Palette::DANGER),
+                                .color(pal().danger),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -566,7 +610,8 @@ impl App {
                 } else if bubble.view_once && bubble.played {
                     self.once_seen_label(ui, bubble.kind, muted);
                 } else if let Some(texture) = self.thumb_texture(index) {
-                    let size = fit_size(texture.size_vec2(), 268.0, 320.0);
+                    let room = ui.available_width().clamp(160.0, 268.0);
+                    let size = fit_size(texture.size_vec2(), room, 320.0);
                     let image = ui.add(
                         egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
                             .corner_radius(8)
@@ -587,7 +632,8 @@ impl App {
                 } else if bubble.view_once && bubble.played {
                     self.once_seen_label(ui, bubble.kind, muted);
                 } else if let Some(texture) = self.thumb_texture(index) {
-                    let size = fit_size(texture.size_vec2(), 268.0, 320.0);
+                    let room = ui.available_width().clamp(160.0, 268.0);
+                    let size = fit_size(texture.size_vec2(), room, 320.0);
                     let response = ui.add(
                         egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
                             .corner_radius(8)
@@ -761,7 +807,7 @@ impl App {
         }
 
         if bubble.kind != Kind::Text && !bubble.text.is_empty() && !bubble.deleted {
-            ui.add_space(2.0);
+            ui.add_space(3.0);
             ui.label(RichText::new(&bubble.text).size(13.5).color(text_color));
         }
 
@@ -782,7 +828,8 @@ impl App {
             _ => None,
         };
         if let Some(texture) = preview {
-            let size = fit_size(texture.size_vec2(), 252.0, 300.0);
+            let room = ui.available_width().clamp(160.0, 252.0);
+            let size = fit_size(texture.size_vec2(), room, 300.0);
             let response = ui.add(
                 egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
                     .corner_radius(10)
@@ -818,10 +865,10 @@ impl App {
 
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(224.0, 74.0), Sense::click());
-        let fill = if text_color == Palette::OWN_TEXT {
-            Color32::from_gray(228)
+        let fill = if text_color == pal().own_text {
+            crate::theme::mix(pal().own_bubble, pal().own_text, 0.09)
         } else {
-            Color32::from_gray(40)
+            crate::theme::mix(pal().in_bubble, pal().in_text, 0.08)
         };
         ui.painter().rect_filled(rect, egui::CornerRadius::same(8), fill);
 
@@ -877,10 +924,10 @@ impl App {
     ) {
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(224.0, 58.0), Sense::click());
-        let fill = if text_color == Palette::OWN_TEXT {
-            Color32::from_gray(230)
+        let fill = if text_color == pal().own_text {
+            crate::theme::mix(pal().own_bubble, pal().own_text, 0.08)
         } else {
-            Color32::from_gray(38)
+            crate::theme::mix(pal().in_bubble, pal().in_text, 0.07)
         };
         ui.painter().rect_filled(rect, egui::CornerRadius::same(8), fill);
         crate::icons::Icon::Download.paint(
@@ -921,12 +968,12 @@ impl App {
         }
         ui.separator();
         egui::Frame::new()
-            .fill(Palette::PANEL)
-            .inner_margin(egui::Margin::symmetric(10, 8))
+            .fill(pal().panel)
+            .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
                 if self.reply.is_some() {
                     egui::Frame::new()
-                        .fill(Palette::SURFACE)
+                        .fill(pal().surface)
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(egui::Margin::symmetric(10, 6))
                         .show(ui, |ui| {
@@ -934,13 +981,13 @@ impl App {
                                 ui.label(
                                     RichText::new(util::truncate(&self.reply_label, 70))
                                         .size(11.5)
-                                        .color(Palette::MUTED),
+                                        .color(pal().muted),
                                 );
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if crate::icons::Icon::Close
-                                            .button(ui, 20.0, Palette::MUTED)
+                                            .button(ui, 20.0, pal().muted)
                                             .clicked()
                                         {
                                             self.reply = None;
@@ -962,7 +1009,7 @@ impl App {
                     let mut pick = false;
                     let mut by_path = false;
                     let attach = crate::icons::Icon::Attach
-                        .button(ui, 30.0, Palette::MUTED)
+                        .button(ui, 30.0, pal().muted)
                         .on_hover_text("Allega un file");
                     egui::Popup::menu(&attach).show(|ui| {
                         ui.set_min_width(196.0);
@@ -989,9 +1036,10 @@ impl App {
                             .desired_rows(1)
                             .frame(
                                 egui::Frame::new()
-                                    .fill(Palette::SURFACE)
-                                    .corner_radius(egui::CornerRadius::same(14))
-                                    .inner_margin(egui::Margin::symmetric(12, 8)),
+                                    .fill(pal().surface)
+                                    .stroke(egui::Stroke::new(1.0, pal().border))
+                                    .corner_radius(egui::CornerRadius::same(16))
+                                    .inner_margin(egui::Margin::symmetric(13, 9)),
                             ),
                     );
                     self.composer_focus = response.has_focus();
@@ -1002,14 +1050,14 @@ impl App {
 
                     if self.composer.trim().is_empty() {
                         if crate::icons::Icon::Mic
-                            .button(ui, 32.0, Palette::TEXT)
+                            .button(ui, 32.0, pal().text)
                             .on_hover_text("Registra un vocale")
                             .clicked()
                         {
                             self.start_recording();
                         }
                     } else if crate::icons::Icon::Send
-                        .button(ui, 32.0, Palette::WHITE)
+                        .filled_button(ui, 34.0, pal().panel, pal().text)
                         .on_hover_text("Invia")
                         .clicked()
                     {
@@ -1034,7 +1082,7 @@ impl App {
 
         ui.horizontal(|ui| {
             if crate::icons::Icon::Trash
-                .button(ui, 30.0, Palette::MUTED)
+                .button(ui, 30.0, pal().muted)
                 .on_hover_text("Annulla")
                 .clicked()
             {
@@ -1047,18 +1095,14 @@ impl App {
                     util::human_duration(seconds.max(0.0) as u32)
                 ))
                 .size(12.5)
-                .color(if blink {
-                    Palette::DANGER
-                } else {
-                    Color32::from_gray(90)
-                }),
+                .color(if blink { pal().danger } else { pal().faint }),
             );
 
             let (rect, _) = ui.allocate_exact_size(Vec2::new(140.0, 22.0), Sense::hover());
-            widgets::waveform(ui.painter(), rect, level, Palette::TEXT, Color32::from_gray(70));
+            widgets::waveform(ui.painter(), rect, level, pal().text, pal().faint);
 
             if crate::icons::Icon::Stop
-                .button(ui, 32.0, Palette::WHITE)
+                .button(ui, 32.0, pal().white)
                 .on_hover_text("Invia vocale")
                 .clicked()
             {
@@ -1279,22 +1323,22 @@ fn call_note(ui: &mut egui::Ui, text: &str, ts: i64) {
     let galley = ui.painter().layout_no_wrap(
         label,
         egui::FontId::proportional(11.0),
-        Palette::MUTED,
+        pal().muted,
     );
     let width = (galley.size().x + 42.0).min(ui.available_width() - 20.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
     let plate = egui::Rect::from_center_size(rect.center(), Vec2::new(width, 22.0));
     ui.painter()
-        .rect_filled(plate, egui::CornerRadius::same(11), Palette::SURFACE);
+        .rect_filled(plate, egui::CornerRadius::same(11), pal().surface);
     let icon = egui::Rect::from_center_size(
         egui::Pos2::new(plate.left() + 14.0, plate.center().y),
         Vec2::splat(13.0),
     );
-    crate::icons::Icon::Phone.paint(ui, icon, Palette::MUTED);
+    crate::icons::Icon::Phone.paint(ui, icon, pal().muted);
     ui.painter().galley(
         egui::Pos2::new(icon.right() + 7.0, plate.center().y - galley.size().y * 0.5),
         galley,
-        Palette::MUTED,
+        pal().muted,
     );
     ui.add_space(4.0);
 }
@@ -1324,6 +1368,20 @@ fn once_hint(kind: Kind) -> &'static str {
         Kind::Text => "Tocca per leggere",
         _ => "Tocca per aprire",
     }
+}
+
+/// Larghezza del testo con il font che si vedrà davvero.
+fn measure_text(ui: &egui::Ui, text: &str, size: f32, wrap: f32) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let galley = ui.painter().layout(
+        text.to_string(),
+        egui::FontId::proportional(size),
+        Color32::WHITE,
+        wrap.max(40.0),
+    );
+    galley.size().x.ceil()
 }
 
 fn fit_size(size: Vec2, max_width: f32, max_height: f32) -> Vec2 {
