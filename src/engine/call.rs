@@ -82,8 +82,10 @@ pub fn start() -> (CallAudio, Option<String>) {
 
 /// Nomi dei dispositivi audio usati, per `--audio-check`.
 pub fn device_names() -> (Option<String>, Option<String>) {
-    let mic = pick_device(true).and_then(|device| device.name().ok());
-    let speaker = pick_device(false).and_then(|device| device.name().ok());
+    // cpal 0.18 espone la descrizione, non più `name()`.
+    let mic = pick_device(true).and_then(|device| device.description().ok().map(|d| d.to_string()));
+    let speaker =
+        pick_device(false).and_then(|device| device.description().ok().map(|d| d.to_string()));
     (mic, speaker)
 }
 
