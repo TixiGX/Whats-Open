@@ -274,10 +274,8 @@ jobs:
             HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
               XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
             echo "== --audio-check =="
-            cat > smoke/alsa-null.conf <<'EOF'
-pcm.!default { type null }
-ctl.!default { type null }
-EOF
+            printf 'pcm.!default { type null }\nctl.!default { type null }\n' \
+              > smoke/alsa-null.conf
             audio_ok=0
             if ALSA_CONFIG_PATH="$PWD/smoke/alsa-null.conf" \
               HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
