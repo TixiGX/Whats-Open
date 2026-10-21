@@ -269,7 +269,10 @@ impl App {
                     widgets::day_separator(ui, &day);
                     last_day = day;
                 }
-                self.bubble_ui(ui, index);
+                // Messaggi ravvicinati dello stesso interlocutore stanno più
+                // stretti: si legge come un discorso, non come un elenco.
+                let tight = index > 0 && grouped(&self.messages[index - 1], &self.messages[index]);
+                self.bubble_ui(ui, index, tight);
             }
             if self.messages.is_empty() {
                 ui.add_space(24.0);
@@ -286,7 +289,7 @@ impl App {
         self.scroll_bottom = false;
     }
 
-    fn bubble_ui(&mut self, ui: &mut egui::Ui, index: usize) {
+    fn bubble_ui(&mut self, ui: &mut egui::Ui, index: usize, tight: bool) {
         // Le chiamate non sono fumetti: una pastiglia centrata, come su
         // WhatsApp, con l'icona della cornetta e la durata.
         if self.messages[index].kind == Kind::System && is_call_note(&self.messages[index].text) {
@@ -308,7 +311,7 @@ impl App {
             ui.add_space(12.0);
             self.bubble_frame(ui, index, &bubble, max_width);
         });
-        ui.add_space(4.0);
+        ui.add_space(if tight { 1.5 } else { 4.0 });
     }
 
     /// Larghezza del contenuto (senza i margini del fumetto): si misura il
@@ -392,6 +395,13 @@ impl App {
 
         let response = egui::Frame::new()
             .fill(fill)
+            // Un filo di bordo: sul tema chiaro il fumetto bianco si stacca
+            // dallo sfondo solo grazie a questo.
+            .stroke(if bare {
+                egui::Stroke::NONE
+            } else {
+                egui::Stroke::new(1.0, crate::theme::mix(fill, pal().border, 0.55))
+            })
             .corner_radius(egui::CornerRadius::same(if bare { 0 } else { 14 }))
             .inner_margin(egui::Margin::symmetric(
                 if bare { 0 } else { 11 },
@@ -1387,6 +1397,22 @@ fn once_hint(kind: Kind) -> &'static str {
         Kind::Text => "Tocca per leggere",
         _ => "Tocca per aprire",
     }
+}
+
+/// Due messaggi che su WhatsApp sembrano un unico discorso: stesso autore,
+/// stesso giorno, meno di cinque minuti di distanza.
+fn grouped(previous: &Message, current: &Message) -> bool {
+    if previous.from_me != current.from_me || previous.sender != current.sender {
+        return false;
+    }
+    if previous.kind == Kind::System || current.kind == Kind::System {
+        return false;
+    }
+    if previous.chat_id.ends_with("@g.us") && !previous.from_me {
+        return false;
+    }
+    let gap = current.ts - previous.ts;
+    (0..300).contains(&gap) && day_label(previous.ts) == day_label(current.ts)
 }
 
 /// Larghezza del testo con il font che si vedrà davvero.

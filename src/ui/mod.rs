@@ -1008,7 +1008,12 @@ impl App {
             self.note("Sei già in una chiamata");
             return;
         }
+        if self.conn != Conn::Connected {
+            self.note("Non ancora collegato: riprova quando la sessione è pronta");
+            return;
+        }
         let Some(engine) = self.engine.as_ref() else {
+            self.note("Motore non avviato: riapri Whats-Open");
             return;
         };
         // Nessuno stato inventato: il pannello compare quando il motore ha
@@ -1910,7 +1915,7 @@ impl eframe::App for App {
 
 pub fn color_for_status(status: Status) -> Color32 {
     match status {
-        Status::Read | Status::Played => pal().white,
+        Status::Read | Status::Played => pal().text,
         Status::Failed => pal().danger,
         _ => pal().muted,
     }

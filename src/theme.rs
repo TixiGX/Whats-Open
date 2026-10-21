@@ -37,6 +37,8 @@ impl Mode {
 /// 1 = scuro (predefinito), 2 = chiaro.
 static MODE: AtomicU8 = AtomicU8::new(1);
 static SOURCE: Mutex<String> = Mutex::new(String::new());
+/// La ricerca nel desktop si fa una volta sola: `gsettings` è un processo.
+static DETECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -141,7 +143,15 @@ pub fn resolve(preference: &str) -> (Mode, String) {
     match preference.trim().to_ascii_lowercase().as_str() {
         "dark" | "scuro" => (Mode::Dark, "impostazione".to_string()),
         "light" | "chiaro" => (Mode::Light, "impostazione".to_string()),
-        _ => detect(),
+        _ => {
+            // Una sola ricerca nel desktop per avvio: la seconda chiamata
+            // (impostazioni, ridisegni) riusa quello che si è già trovato.
+            if DETECTED.swap(true, Ordering::Relaxed) {
+                (mode(), source())
+            } else {
+                detect()
+            }
+        }
     }
 }
 

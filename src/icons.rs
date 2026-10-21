@@ -426,7 +426,7 @@ impl Icon {
             ui,
             glyph,
             if hovered {
-                crate::theme::pal().white
+                crate::theme::pal().text
             } else {
                 color
             },
