@@ -197,10 +197,6 @@ fn decoder_command() -> Command {
         "-hide_banner",
         "-loglevel",
         "error",
-        "-fflags",
-        "nobuffer",
-        "-flags",
-        "low_delay",
         "-probesize",
         "65536",
         "-analyzeduration",
@@ -241,6 +237,9 @@ pub fn self_test() -> Result<String, String> {
             "testsrc=size=320x180:rate=15",
             "-t",
             "1",
+            // testsrc nasce 4:4:4 e il profilo baseline non lo accetta.
+            "-pix_fmt",
+            "yuv420p",
             "-an",
             "-c:v",
             "libx264",
@@ -260,7 +259,7 @@ pub fn self_test() -> Result<String, String> {
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("ffmpeg (sorgente di prova): {err}"))?;
 
@@ -268,6 +267,15 @@ pub fn self_test() -> Result<String, String> {
         .spawn()
         .map_err(|err| format!("ffmpeg (decodifica di prova): {err}"))?;
     let mut input = decoder.stdin.take().ok_or("decodificatore senza stdin")?;
+
+    let mut source_err = source.stderr.take();
+    let err_reader = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut err) = source_err.take() {
+            let _ = err.read_to_string(&mut text);
+        }
+        text
+    });
 
     let source_out = source.stdout.take().ok_or("sorgente senza stdout")?;
     let reader = thread::spawn(move || {
@@ -313,8 +321,15 @@ pub fn self_test() -> Result<String, String> {
     let _ = decoder.wait();
     let _ = source.wait();
     let units = reader.join().unwrap_or(0);
+    let source_error = err_reader.join().unwrap_or_default();
     if units == 0 {
-        return Err("nessuna access unit prodotta".to_string());
+        let detail = source_error.trim();
+        let detail: String = detail.chars().take(400).collect();
+        return Err(if detail.is_empty() {
+            "nessuna access unit prodotta".to_string()
+        } else {
+            format!("nessuna access unit prodotta: {detail}")
+        });
     }
     if frames == 0 {
         return Err(format!("{units} access unit, ma nessun fotogramma decodificato"));

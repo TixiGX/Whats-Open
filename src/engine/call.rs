@@ -510,6 +510,7 @@ pub async fn accept(
     }
 
     let video = media.is_some();
+    let camera_live = media.as_ref().is_some_and(|session| session.has_camera());
     emit(
         &sink,
         Event::Call {
@@ -539,7 +540,7 @@ pub async fn accept(
                 session.peer = peer.clone();
                 session.video = video;
                 session.media = media;
-                session.camera_on = video;
+                session.camera_on = camera_live;
             }
             monitor(state, sink, peer, video, false).await;
         }
@@ -638,6 +639,7 @@ pub async fn start_outgoing(
         let (source, sink_video) = session.endpoints();
         builder = builder.video(source, sink_video);
     }
+    let camera_live = media.as_ref().is_some_and(|session| session.has_camera());
     let result = builder.start().await;
 
     match result {
@@ -649,7 +651,7 @@ pub async fn start_outgoing(
                 session.peer = chat.clone();
                 session.video = video;
                 session.media = media;
-                session.camera_on = video;
+                session.camera_on = camera_live;
                 session.active = false;
             }
             monitor(state, sink, chat, video, true).await;
