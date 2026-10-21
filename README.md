@@ -203,18 +203,24 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
    (`--doctor`). In assenza di ALSA imposta "Usa il player di sistema".
 5. **Video neri**: manca ffmpeg o il codec; con "Usa il player di sistema" il
    file si apre nel player del desktop.
-6. **Selettore file che non risponde**: installa `xdg-desktop-portal` e
+6. **La chiamata non parte**: il messaggio nel fumetto in basso dice il
+   motivo. I due casi più comuni sono «nessun dispositivo raggiungibile» e
+   «chiamate non ancora autorizzate»: in entrambi basta mandare *prima* un
+   messaggio al contatto (crea la sessione cifrata) e richiamare. Se il
+   microfono o le casse mancano la chiamata parte lo stesso, con un avviso:
+   si sente o si parla da una sola parte invece di fallire.
+7. **Selettore file che non risponde**: installa `xdg-desktop-portal` e
    `zenity`, oppure usa **Allega → Da percorso…**.
-7. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
+8. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
    lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
    automaticamente come riserva.
-8. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
+9. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
    uccide `rustc` per mancanza di RAM. Compila con `cargo build --release -j 2`
    (o `-j 1`), chiudi le altre applicazioni oppure usa gli archivi precompilati.
-9. **`install.sh: comando non trovato`**: lo script va lanciato dalla radice del
+10. **`install.sh: comando non trovato`**: lo script va lanciato dalla radice del
    repository (`./packaging/install.sh`) oppure dalla cartella dell'archivio
    estratto (`./install.sh`), non da dentro `packaging/`.
-10. **Sessione danneggiata**: dalla schermata di errore usa **Cancella la
+11. **Sessione danneggiata**: dalla schermata di errore usa **Cancella la
     sessione**, oppure rimuovi `~/.local/share/whats-open/session.db`.
 
 ## Architettura
