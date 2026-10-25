@@ -290,6 +290,14 @@ jobs:
               video_ok=1
             fi
             echo "video-check ok: $video_ok"
+            echo "== --selftest =="
+            selftest_ok=0
+            if ALSA_CONFIG_PATH="$PWD/smoke/alsa-null.conf" \
+              HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --selftest; then
+              selftest_ok=1
+            fi
+            echo "selftest ok: $selftest_ok"
           } > smoke.log 2>&1
 
           Xvfb :99 -screen 0 1280x800x24 > xvfb.log 2>&1 &
@@ -432,6 +440,13 @@ jobs:
           fi
           if [ "${audio_ok:-0}" != "1" ]; then
             echo "::error::--audio-check non è passato: microfono, casse o silenzio di riserva non funzionano"
+            video_failed=1
+          fi
+          grep -E "^FAIL" smoke.log | head -10 | while IFS= read -r line; do
+            echo "::error::collaudo $line"
+          done
+          if [ "${selftest_ok:-0}" != "1" ]; then
+            echo "::error::--selftest non è passato: una funzione interna è rotta (vedi la riga FAIL)"
             video_failed=1
           fi
           {

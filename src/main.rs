@@ -12,6 +12,7 @@ mod media;
 mod model;
 mod platform;
 mod play;
+mod selftest;
 mod store;
 mod theme;
 mod ui;
@@ -80,6 +81,17 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("video: {error}");
                 std::process::exit(1);
             }
+        }
+        return Ok(());
+    }
+
+    if args.iter().any(|arg| arg == "--selftest" || arg == "--collaudo") {
+        // Collaudo completo senza account: archivio, messaggi, media, tema,
+        // configurazione, rubrica, audio e video. Esce 1 se qualcosa non va.
+        let report = selftest::run();
+        print!("{}", report.text());
+        if !report.ok() {
+            std::process::exit(1);
         }
         return Ok(());
     }
@@ -167,6 +179,7 @@ fn print_help() {
          \x20 --doctor, --diagnostica      stampa l'ambiente e le dipendenze trovate\n\
          \x20 --video-check                prova il percorso video delle chiamate\n\
          \x20 --audio-check                prova microfono e casse (o il silenzio di riserva)\n\
+         \x20 --selftest, --collaudo       prova tutte le funzioni che non richiedono l'account\n\
          \x20 --theme <auto|light|dark>    forza il tema, ignorando quello del desktop\n\
          \x20 --version                    versione\n\
          \x20 --help                       questo testo\n\n\

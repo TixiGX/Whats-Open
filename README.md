@@ -143,6 +143,7 @@ whats-open --pair 3933...     # accesso con codice a 8 caratteri
 whats-open --doctor           # ambiente, dipendenze e percorsi
 whats-open --audio-check      # microfono, casse o silenzio di riserva
 whats-open --video-check      # percorso H.264 delle videochiamate
+whats-open --selftest         # collaudo di tutte le funzioni senza account
 whats-open --theme chiaro     # forza il tema (auto | chiaro | scuro)
 whats-open --help
 ```
@@ -176,6 +177,25 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
   "camera": "/dev/video0",  // fotocamera per le videochiamate
   "theme": "auto"           // auto | light | dark
 }
+```
+
+### Collaudo senza account
+
+`whats-open --selftest` (alias `--collaudo`) esercita il binario vero su tutto
+ciò che non richiede il telefono: percorsi e cache confinati, archivio (11 tipi
+di messaggio, stati che non tornano indietro, modifica/revoca/reazione,
+contenuti "una volta sola", invii appesi e riprova, alias LID, fusione dei
+contatti), traduzione dei protobuf, miniature e video, configurazione, tema
+GTK/KDE, rubrica vCard, nomi e numeri, contrasto delle due tavolozze, canale
+audio e percorso video delle chiamate. Ogni riga è `OK` o `FAIL` e l'uscita è
+1 se qualcosa non torna: è lo stesso controllo che gira nella CI.
+
+```bash
+$ whats-open --selftest
+Whats-Open 0.1.0 — collaudo delle funzioni interne
+OK   percorsi                   cartelle create, percorsi dei media confinati
+OK   archivio                   11 tipi di messaggio, stati, modifica/revoca/reazione, una-volta, invii appesi, nomi, alias, contatti, fusione LID
+...
 ```
 
 ### Variabili d'ambiente
