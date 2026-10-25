@@ -502,7 +502,7 @@ fn check_extract() -> Result<String, String> {
     let wrapped = wa::Message {
         ephemeral_message: MessageField::some(wa::message::FutureProofMessage {
             message: MessageField::some(wa::Message {
-                conversation: Some("dentro").to_string(),
+                conversation: Some("dentro".to_string()),
                 ..Default::default()
             }),
             ..Default::default()
