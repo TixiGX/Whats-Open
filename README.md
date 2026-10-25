@@ -195,7 +195,17 @@ $ whats-open --selftest
 Whats-Open 0.1.0 — collaudo delle funzioni interne
 OK   percorsi                   cartelle create, percorsi dei media confinati
 OK   archivio                   11 tipi di messaggio, stati, modifica/revoca/reazione, una-volta, invii appesi, nomi, alias, contatti, fusione LID
-...
+OK   estrazione messaggi        testo, foto (una volta), GIF, vocale, documento, sticker, posizione, citazione, contenitori, sconosciuto
+OK   media                      immagine 640×360 con miniatura 480×270, video 2.0 s 320×180 con fotogramma 320×180 (5 KB)
+OK   configurazione             salvataggio, rilettura e file corrotto
+OK   tema del desktop           gtk-theme-name, gtk-application-prefer-dark-theme, GTK_THEME, kdeglobals
+OK   leggibilità                scuro/testo 18.2:1, scuro/fumetto mio 17.7:1, scuro/fumetto ricevuto 15.3:1, chiaro/testo 16.6:1, chiaro/fumetto mio 15.1:1, chiaro/fumetto ricevuto 17.7:1
+OK   rubrica                    2 contatti, FN e N, numeri con + e senza
+OK   nomi e numeri              nomi, iniziali, numeri, gruppi, canali, stati, pesi, durate, id
+OK   canale audio               microfono: Default Audio Device · casse: Default Audio Device · 2 frame da 60 ms pronti
+OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati a 320×180
+
+11 controlli superati, 0 falliti su 11
 ```
 
 ### Variabili d'ambiente

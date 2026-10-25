@@ -338,6 +338,15 @@ pub fn display_name(name: &str, jid: &str) -> String {
     if !name.trim().is_empty() {
         return name.trim().to_string();
     }
+    // Un LID è un indirizzo interno di WhatsApp, non un numero di telefono:
+    // mostrarlo come "+1234…" farebbe credere di conoscere il numero. Stessa
+    // cosa per un gruppo senza oggetto, che non è un contatto.
+    if jid_is_group(jid) {
+        return "Gruppo".to_string();
+    }
+    if jid.ends_with("@lid") {
+        return "Contatto".to_string();
+    }
     let user = jid_user(jid);
     if user.chars().all(|c| c.is_ascii_digit()) && !user.is_empty() {
         phone_display(&user)
@@ -509,6 +518,9 @@ mod tests {
             display_name("", "393331234567@s.whatsapp.net"),
             "+393331234567"
         );
+        // Un LID e un gruppo senza nome non sono numeri di telefono.
+        assert_eq!(display_name("", "1234567890@lid"), "Contatto");
+        assert_eq!(display_name("", "120363000000000000@g.us"), "Gruppo");
         assert_eq!(initials("Maria Rossi"), "MR");
         assert_eq!(initials(""), "?");
     }

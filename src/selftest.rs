@@ -774,7 +774,12 @@ fn check_formatting() -> Result<String, String> {
         (
             "display_name LID",
             util::display_name("", "1234567890@lid"),
-            "+1234567890".to_string(),
+            "Contatto".to_string(),
+        ),
+        (
+            "display_name gruppo",
+            util::display_name("", "120363000000000000@g.us"),
+            "Gruppo".to_string(),
         ),
         ("iniziali", util::initials("Marta Bianchi"), "MB".to_string()),
         ("iniziali vuote", util::initials(""), "?".to_string()),
