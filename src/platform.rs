@@ -342,7 +342,7 @@ const STYLE_CODES: [&str; 12] = ["r", "rg", "b", "bi", "i", "o", "l", "m", "sb",
 
 /// Come può proseguire il nome di un file dopo la famiglia: "Cantarell**Bold**",
 /// "NotoSans**-Regular**" (i separatori sono già tolti), "Inter**Variable**".
-const STYLE_WORDS: [&str; 24] = [
+const STYLE_WORDS: [&str; 23] = [
     "regular",
     "roman",
     "book",
