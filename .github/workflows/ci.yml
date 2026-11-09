@@ -321,6 +321,9 @@ jobs:
           if [ "${rss:-0}" -gt 524288 ]; then
             echo "::warning::memoria oltre 512 MB: ${rss} kB"
           fi
+          if [ $(( (cpu_b - cpu_a) * 10 )) -gt 800 ]; then
+            echo "::warning::CPU alta a finestra ferma: $(( (cpu_b - cpu_a) * 10 )) ms in 4 s"
+          fi
           import -display :99 -window root smoke/shot.png 2> smoke/shot.err
           kill "$app" 2>/dev/null
           sleep 1

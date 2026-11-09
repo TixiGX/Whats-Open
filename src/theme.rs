@@ -489,14 +489,14 @@ pub fn detect_detailed() -> Detected {
         .hint
         .or_else(|| desktop.name.as_deref().map(mode_from_name))
         .unwrap_or(Mode::Dark);
-    Detected::preset(
-        mode,
-        if desktop.source.is_empty() {
-            "predefinito".to_string()
-        } else {
-            desktop.source
-        },
-    )
+    let source = if !desktop.source.is_empty() {
+        desktop.source
+    } else if desktop.hint.is_some() {
+        format!("preferisce {}", mode.label())
+    } else {
+        "predefinito".to_string()
+    };
+    Detected::preset(mode, source)
 }
 
 /// Cerca il tema del desktop con la modalità richiesta. Serve alle
@@ -582,12 +582,17 @@ fn desktop() -> Desktop {
         }
     }
     if let Some((name, hint)) = gtk_settings_ini() {
-        return Desktop {
-            name: Some(name.clone()),
-            source: format!("gtk settings.ini: {name}"),
-            hint: hint.or(hint_from_scheme),
-            kde: None,
-        };
+        if let Some(name) = name {
+            return Desktop {
+                name: Some(name.clone()),
+                source: format!("tema GTK {name} (settings.ini)"),
+                hint: hint.or(hint_from_scheme),
+                kde: None,
+            };
+        }
+        // Solo la preferenza chiaro/scuro: si continua a cercare un tema,
+        // ma la scelta resta quella dichiarata da GTK.
+        hint_from_scheme = hint_from_scheme.or(hint);
     }
     if !gnome_like {
         if let Some((name, hint)) = gsettings_theme() {
@@ -618,14 +623,17 @@ fn desktop() -> Desktop {
     }
 }
 
-fn gtk_settings_ini() -> Option<(String, Option<Mode>)> {
+/// Restituisce il nome del tema (se c'è) e la preferenza chiaro/scuro.
+fn gtk_settings_ini() -> Option<(Option<String>, Option<Mode>)> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     for variant in ["gtk-4.0", "gtk-3.0"] {
         let path = home.join(".config").join(variant).join("settings.ini");
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let name = ini_value(&text, "gtk-theme-name");
+        let name = ini_value(&text, "gtk-theme-name")
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
         let dark = ini_value(&text, "gtk-application-prefer-dark-theme").and_then(|value| {
             match value.trim() {
                 "1" | "true" | "True" => Some(Mode::Dark),
@@ -633,8 +641,8 @@ fn gtk_settings_ini() -> Option<(String, Option<Mode>)> {
                 _ => None,
             }
         });
-        if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
-            return Some((name.trim().to_string(), dark));
+        if name.is_some() || dark.is_some() {
+            return Some((name, dark));
         }
     }
     None
@@ -967,10 +975,11 @@ fn define_colors(text: &str) -> Vec<(String, String)> {
     let mut cursor = 0;
     while let Some(found) = text[cursor..].find(needle) {
         let start = cursor + found + needle.len();
-        let rest = &text[start..];
-        let name_end = rest
-            .find(|ch: char| ch.is_whitespace())
-            .unwrap_or(rest.len());
+        // Fra `@define-color` e il nome c'è sempre uno spazio: senza saltarlo
+        // il nome risulterebbe vuoto e il tema sembrerebbe privo di colori.
+        let rest = text[start..].trim_start();
+        let skipped = text[start..].len() - rest.len();
+        let name_end = rest.find(|ch: char| ch.is_whitespace()).unwrap_or(rest.len());
         let name = rest[..name_end].trim();
         let after = &rest[name_end..];
         let Some(end) = after.find(';') else {
@@ -980,7 +989,7 @@ fn define_colors(text: &str) -> Vec<(String, String)> {
         if !name.is_empty() && !value.is_empty() {
             out.push((name.to_string(), value.to_string()));
         }
-        cursor = start + name_end + end + 1;
+        cursor = start + skipped + name_end + end + 1;
     }
     out
 }
@@ -1371,6 +1380,25 @@ mod tests {
             ini_value("[General]\nColorScheme=BreezeDark\n", "ColorScheme").as_deref(),
             Some("BreezeDark")
         );
+    }
+
+    #[test]
+    fn i_colori_si_leggono_dal_testo_del_tema() {
+        // Il caso vero: `@define-color` seguito da uno spazio, più righe.
+        let css = "/* commento */\n@define-color theme_bg_color #f2f2f4;\n\
+                   @define-color theme_fg_color rgb(29, 29, 31);\n\
+                   @define-color theme_selected_bg_color @accento;\n\
+                   @define-color accento #007aff;\n";
+        let defs: HashMap<String, String> = define_colors(&strip_comments(css)).into_iter().collect();
+        assert_eq!(defs.get("theme_bg_color").map(String::as_str), Some("#f2f2f4"));
+        assert_eq!(
+            defs.get("theme_fg_color").map(String::as_str),
+            Some("rgb(29, 29, 31)")
+        );
+        let colors = pick_colors(&defs).expect("i quattro colori principali");
+        assert_eq!(colors.bg, Color32::from_rgb(242, 242, 244));
+        assert_eq!(colors.fg, Color32::from_rgb(29, 29, 31));
+        assert_eq!(colors.selected, Color32::from_rgb(0, 122, 255));
     }
 
     #[test]

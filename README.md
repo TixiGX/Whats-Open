@@ -164,6 +164,12 @@ tinte restano in scala di grigi, come vuole il progetto. Le bolle inviate
 sono scure su tema chiaro e chiare su tema scuro, con contrasto garantito
 almeno 7:1.
 
+Il tema viene **seguito anche mentre l'app è aperta**: se il desktop passa a
+chiaro/scuro o cambia tema, la finestra si aggiorna entro pochi secondi. Il
+controllo costa qualche `stat` al secondo; il CSS viene riletto solo quando
+qualcosa è davvero cambiato, quindi non c'è nessun processo in più e la CPU
+resta ferma.
+
 Con `--theme chiaro|scuro` si forza la modalità: se il tema non ha la
 variante corrispondente si usa una delle due tavolozze incorporate, invece di
 mostrare colori sbagliati. `whats-open --doctor` dice quale tema e quali
