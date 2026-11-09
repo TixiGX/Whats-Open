@@ -153,8 +153,19 @@ impl Palette {
         } else {
             (Color32::from_gray(selected_gray.r().clamp(18, 70)), Color32::from_gray(246))
         };
+        // La bolla ricevuta deve staccarsi dallo sfondo: su molti temi scuri
+        // il colore "base" è quasi identico a quello della finestra e la chat
+        // diventerebbe piatta. La tinta viene dal testo (già corretto per la
+        // leggibilità), quindi resta un grigio del tema.
         let in_bubble = if native.dark {
-            shift(surface, 8)
+            let lifted = mix(bg, text, 0.12);
+            if (lifted.r() as i16 - bg.r() as i16).abs() < 10 {
+                shift(bg, 14)
+            } else {
+                lifted
+            }
+        } else if (panel.r() as i16 - bg.r() as i16).abs() < 8 {
+            mix(bg, text, 0.06)
         } else {
             panel
         };
@@ -1380,6 +1391,41 @@ mod tests {
             ini_value("[General]\nColorScheme=BreezeDark\n", "ColorScheme").as_deref(),
             Some("BreezeDark")
         );
+    }
+
+    #[test]
+    fn le_bolle_ricevute_si_staccano_dallo_sfondo() {
+        // Tema scuro con "base" quasi uguale alla finestra (MacOS Tahoe).
+        let dark = NativeTheme {
+            name: "MacOS-Tahoe".to_string(),
+            variant: "gtk-3.0".to_string(),
+            dark: true,
+            colors: 5,
+            bg: Color32::from_rgb(51, 51, 51),
+            base: Color32::from_rgb(36, 36, 36),
+            fg: Color32::from_rgb(222, 222, 222),
+            selected: Color32::from_rgb(0, 136, 255),
+        };
+        let palette = Palette::from_native(&dark);
+        assert!(
+            (palette.in_bubble.r() as i16 - palette.bg.r() as i16).abs() >= 12,
+            "bolla {} troppo vicina allo sfondo {}",
+            palette.in_bubble.r(),
+            palette.bg.r()
+        );
+        assert!(contrast(palette.in_text, palette.in_bubble) >= 7.0);
+
+        // Tema chiaro con "base" uguale allo sfondo: la bolla resta visibile.
+        let light = NativeTheme {
+            dark: false,
+            bg: Color32::from_rgb(250, 250, 250),
+            base: Color32::from_rgb(250, 250, 250),
+            fg: Color32::from_rgb(30, 30, 30),
+            ..dark
+        };
+        let palette = Palette::from_native(&light);
+        assert!((palette.in_bubble.r() as i16 - palette.bg.r() as i16).abs() >= 8);
+        assert!(contrast(palette.in_text, palette.in_bubble) >= 7.0);
     }
 
     #[test]

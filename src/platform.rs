@@ -385,7 +385,12 @@ fn search_font(root: &Path, file: &str) -> Option<PathBuf> {
 /// Una libreria di testi non valida farebbe andare in panico egui al primo
 /// fotogramma: qui si controlla l'intestazione del file prima di passarlo.
 pub fn load_system_fonts() -> Vec<(String, Vec<u8>)> {
+    // Tetto complessivo: i font di sistema servono solo come riserva per
+    // emoji e scritture non latine. Con un limite la memoria resta bassa
+    // anche su distribuzioni che installano collezioni CJK molto grandi.
+    const FONT_BUDGET: usize = 32 * 1024 * 1024;
     let mut out = Vec::new();
+    let mut total = 0usize;
     for path in system_font_candidates() {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
@@ -393,6 +398,15 @@ pub fn load_system_fonts() -> Vec<(String, Vec<u8>)> {
         if bytes.len() < 1024 || !font_magic_ok(&bytes) {
             continue;
         }
+        if total + bytes.len() > FONT_BUDGET {
+            log::debug!(
+                "font di sistema: {} saltato, il tetto di {} MB è raggiunto",
+                path.display(),
+                FONT_BUDGET / (1024 * 1024)
+            );
+            continue;
+        }
+        total += bytes.len();
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
