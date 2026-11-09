@@ -30,8 +30,8 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - File trascinati nella finestra, selettore di sistema o percorso a mano
 - Istanza singola: la seconda copia riporta davanti la finestra già aperta
 - **Tema nativo**: legge i colori del tema GTK in uso (anche "MacOS Tahoe",
-  WhiteSur, Adwaita, Breeze…) e li riporta in scala di grigi, restando
-  monocromatico
+  WhiteSur, Adwaita, Breeze…) e ne segue il chiaroscuro, tenendo i verdi e i
+  grigi di WhatsApp (avatar colorati per contatto, bolle inviate verdi)
 - **Notifiche di sistema** per messaggi e chiamate, con clic che riporta la
   finestra davanti: D-Bus diretto, nessun `notify-send`, nessun processo extra
 - Log su file (con rotazione) e diagnostica integrata
@@ -172,11 +172,13 @@ Il tema segue il desktop **e ne usa i colori**. Si legge il nome del tema
 (`GTK_THEME`, `gsettings`, `gtk-3.0|4.0/settings.ini`, `kdeglobals`), si apre
 il suo `gtk.css` (o `gtk-dark.css`) e si prendono le `@define-color`
 `theme_bg_color`, `theme_base_color`, `theme_fg_color`,
-`theme_selected_bg_color`. Da lì nasce la tavolozza: la luminosità è quella
-del tema — quindi un tema macOS avrà i suoi grigi, Adwaita i suoi — ma le
-tinte restano in scala di grigi, come vuole il progetto. Le bolle inviate
-sono scure su tema chiaro e chiare su tema scuro, con contrasto garantito
-almeno 7:1.
+`theme_selected_bg_color`. Da lì nasce la tavolozza: lo sfondo, i pannelli e
+il testo prendono la luminosità del tema (un tema macOS avrà i suoi grigi,
+Adwaita i suoi), mentre i verdi di WhatsApp — bolla inviata, pastiglie dei
+non letti, pulsante di invio — restano riconoscibili. Gli avatar dei contatti
+sono disegnati con una tinta stabile per indirizzo, come sul telefono; gli
+angoli del fumetto sono smussati dal lato opposto al mittente. Il testo ha
+contrasto garantito almeno 7:1.
 
 Il tema viene **seguito anche mentre l'app è aperta**: se il desktop passa a
 chiaro/scuro o cambia tema, la finestra si aggiorna entro pochi secondi. Il
@@ -321,7 +323,7 @@ interfaccia egui  ──comandi──▶  thread di rete (Tokio + whatsapp-rust)
 - `src/play` — audio (cpal + ffmpeg), video (ffmpeg), registrazione
 - `src/store` — archivio SQLite di chat e messaggi
 - `src/platform.rs` — ambiente, font di sistema, apertura esterna, istanza singola
-- `src/theme.rs`, `src/icons.rs` — tema monocromatico e icone disegnate a mano
+- `src/theme.rs`, `src/icons.rs` — tavolozza (tema del desktop + verdi WhatsApp) e icone disegnate a mano
 - `packaging/install.sh` — installazione e rimozione su qualsiasi distribuzione
 
 ## Icona
