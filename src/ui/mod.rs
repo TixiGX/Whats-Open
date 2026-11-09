@@ -186,6 +186,9 @@ pub struct App {
     /// Spazio occupato da archivio e cache: si ricalcola al massimo ogni due
     /// secondi, non a ogni fotogramma.
     pub usage: Option<(Instant, u64)>,
+    /// Altezza dell'ultima schermata di accesso disegnata: serve a centrarla
+    /// in verticale invece di lasciarla appoggiata in alto.
+    pub login_height: f32,
     pub started: Instant,
 }
 
@@ -299,6 +302,7 @@ impl App {
             last_expiry: Instant::now(),
             scroll_bottom: false,
             usage: None,
+            login_height: 0.0,
             started: Instant::now(),
         };
         app.sort_chats();

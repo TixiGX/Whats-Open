@@ -17,11 +17,19 @@ impl App {
         let compact = height < 760.0;
         let side = if compact { 190.0 } else { 228.0 };
 
-        egui::ScrollArea::vertical()
+        // Il blocco si centra in verticale usando l'altezza misurata nel
+        // fotogramma precedente: se non ci sta, resta in alto e scorre.
+        let measured = self.login_height;
+        let top = if measured > 0.0 && measured < height {
+            (height - measured) * 0.45
+        } else {
+            8.0
+        };
+        let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(if compact { 8.0 } else { (height * 0.08).max(20.0) });
+                    ui.add_space(top.max(4.0));
 
                     if self.logo_tex.is_none() {
                         if let Some((image, _, _)) = gfx::logo_image() {
@@ -143,6 +151,9 @@ impl App {
                     ui.add_space(if compact { 6.0 } else { 10.0 });
                 });
             });
+        // Senza lo spazio in testa: altrimenti la misura crescerebbe da sola
+        // a ogni fotogramma.
+        self.login_height = (output.content_size.y - top.max(4.0)).max(0.0);
     }
 
     fn qr_card(&mut self, ui: &mut egui::Ui, side: f32) {
