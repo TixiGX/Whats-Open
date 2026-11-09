@@ -203,7 +203,7 @@ pub fn report(paths: &crate::util::Paths) -> String {
             )
         ));
     }
-    if fonts.is_empty() {
+    if plan.fallback.is_empty() {
         advice.push(format!(
             "font Noto — emoji e scritture non latine: {}",
             install_hint(
@@ -477,7 +477,7 @@ fn pick_family(family: &str, files: &[PathBuf]) -> Option<PathBuf> {
         // Il nome del file comincia con la famiglia e prosegue col peso:
         // "DejaVu Sans" + "bold". Così "Noto Sans" non finisce per scegliere
         // `NotoSansArabic` solo perché comincia con le stesse lettere.
-        let mut rank = if name == wanted {
+        let mut rank: u32 = if name == wanted {
             0
         } else if name == format!("{wanted}regular") {
             1

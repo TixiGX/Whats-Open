@@ -1,6 +1,6 @@
 //! Elementi grafici ricorrenti: avatar, separatori, barre.
 
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Response, RichText, Stroke, Ui, Vec2};
 
 use crate::theme::pal;
 
