@@ -1037,7 +1037,8 @@ impl App {
         let jid = self.me_jid.clone();
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(46.0), Sense::hover());
-            super::widgets::avatar(ui.painter(), rect, &name, &jid, false, true);
+            // Senza pallino di presenza: il proprio stato non si annuncia.
+            super::widgets::avatar(ui.painter(), rect, &name, &jid, false, false);
             ui.add_space(6.0);
             ui.vertical(|ui| {
                 ui.label(

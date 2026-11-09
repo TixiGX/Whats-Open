@@ -335,9 +335,14 @@ const UI_FAMILIES: [&str; 16] = [
     "Arial",
 ];
 
+/// Sigle di un carattere nei nomi corti: `Ubuntu-R.ttf`, `Ubuntu-B.ttf`,
+/// `DejaVuSans-Oblique.ttf`. Valgono solo se sono *tutto* il resto del nome,
+/// altrimenti "NotoSansArabic" verrebbe scambiato per il tondo di Noto Sans.
+const STYLE_CODES: [&str; 12] = ["r", "rg", "b", "bi", "i", "o", "l", "m", "sb", "db", "c", "n"];
+
 /// Come può proseguire il nome di un file dopo la famiglia: "Cantarell**Bold**",
 /// "NotoSans**-Regular**" (i separatori sono già tolti), "Inter**Variable**".
-const STYLE_WORDS: [&str; 20] = [
+const STYLE_WORDS: [&str; 24] = [
     "regular",
     "roman",
     "book",
@@ -358,6 +363,9 @@ const STYLE_WORDS: [&str; 20] = [
     "narrow",
     "variable",
     "wght",
+    "wdth",
+    "opsz",
+    "slnt",
 ];
 
 /// Famiglie a spaziatura fissa, dalla più gradevole alla più comune.
@@ -482,10 +490,19 @@ fn pick_family(family: &str, files: &[PathBuf]) -> Option<PathBuf> {
         } else if name == format!("{wanted}regular") {
             1
         } else if let Some(rest) = name.strip_prefix(&wanted) {
-            if !STYLE_WORDS.iter().any(|word| rest.starts_with(word)) {
+            if STYLE_CODES.contains(&rest) {
+                // Le sigle corte dicono quasi sempre il peso: "r" è il tondo,
+                // "b" il grassetto, "i" il corsivo.
+                if rest == "r" || rest == "rg" {
+                    1
+                } else {
+                    6
+                }
+            } else if STYLE_WORDS.iter().any(|word| rest.starts_with(word)) {
+                3
+            } else {
                 continue;
             }
-            3
         } else {
             continue;
         };
@@ -982,6 +999,17 @@ mod tests {
         let names = ["/f/NotoEmoji-Regular.ttf", "/f/AcmeSans-Regular.ttf"];
         assert_eq!(pick_any(&files(&names)).map(|p| file_name(&p)).as_deref(), Some("AcmeSans-Regular.ttf"));
         assert_eq!(pick_any(&files(&["/f/NotoEmoji-Regular.ttf"])), None);
+    }
+
+    #[test]
+    fn le_sigle_corte_dei_nomi_di_file() {
+        // Ubuntu chiama i suoi file "Ubuntu-R.ttf", "Ubuntu-B.ttf": senza le
+        // sigle il carattere del desktop non verrebbe mai trovato.
+        let names = ["/f/Ubuntu-B.ttf", "/f/Ubuntu-I.ttf", "/f/Ubuntu-R.ttf"];
+        assert_eq!(picked("Ubuntu", &names).as_deref(), Some("Ubuntu-R.ttf"));
+        // Un font variabile ("Ubuntu[wdth,wght].ttf") resta una scelta valida.
+        let names = ["/f/Ubuntu-B.ttf", "/f/Ubuntuwdthwght.ttf"];
+        assert!(picked("Ubuntu", &names).is_some());
     }
 
     #[test]

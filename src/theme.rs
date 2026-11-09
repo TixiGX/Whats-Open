@@ -1354,8 +1354,13 @@ pub fn font_info() -> Option<FontInfo> {
 /// prova con le famiglie più comuni. I font incorporati nel binario restano
 /// solo come ultima risorsa, quando nella macchina non c'è nessun font.
 pub fn install_system_fonts(ctx: &egui::Context) {
+    let builtin = font_info().map(|info| info.builtin).unwrap_or(false);
     if std::env::var_os("WHATS_OPEN_NO_SYSTEM_FONTS").is_some() {
-        set_builtin_fonts(ctx);
+        // Lo stesso vale quando i font sono già quelli incorporati: rifarli a
+        // ogni cambio di tema butterebbe via la cache di egui senza motivo.
+        if !builtin {
+            set_builtin_fonts(ctx);
+        }
         return;
     }
     // Cambiare tema non deve far rileggere i font: una volta scelti restano.

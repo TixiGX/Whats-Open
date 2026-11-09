@@ -84,7 +84,9 @@ impl App {
                         let width = if wide {
                             (room - gap) * 0.5
                         } else {
-                            room.max(160.0)
+                            // In una finestra molto stretta il pulsante resta
+                            // dentro: meglio stretto che tagliato dal bordo.
+                            room
                         };
                         ui.scope(|ui| {
                             ui.set_max_width(room);

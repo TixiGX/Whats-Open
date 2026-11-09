@@ -92,12 +92,14 @@ impl App {
         {
             let height = ui.available_height();
             ui.vertical_centered(|ui| {
-                ui.add_space(height * 0.33);
+                // In una finestra bassa il 33% finirebbe sotto il bordo: il
+                // logo si tiene dentro lo spazio davvero disponibile.
+                ui.add_space((height * 0.33).min((height - 110.0).max(12.0)));
                 if let Some(texture) = self.logo_tex.as_ref() {
                     ui.add(
                         egui::Image::new(egui::load::SizedTexture::new(
                             texture.id(),
-                            Vec2::splat(58.0),
+                            Vec2::splat(if height < 300.0 { 42.0 } else { 58.0 }),
                         ))
                         .corner_radius(14)
                         .tint(Color32::from_gray(90)),
