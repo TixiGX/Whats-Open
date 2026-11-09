@@ -1520,7 +1520,13 @@ fn fonts_are_loadable(faces: &[LoadedFont]) -> bool {
             definitions,
         );
     });
-    std::panic::catch_unwind(probe).is_ok()
+    // Il messaggio di panico di una prova non interessa a nessuno: lo si
+    // zittisce per la durata del controllo e si rimette com'era dopo.
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let loaded = std::panic::catch_unwind(probe).is_ok();
+    std::panic::set_hook(previous);
+    loaded
 }
 
 /// I font compilati nel binario: ultima risorsa quando il sistema non ne ha.

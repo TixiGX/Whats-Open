@@ -262,7 +262,7 @@ OK   media                      immagine 640×360 con miniatura 480×270, video 
 OK   configurazione             salvataggio, rilettura e file corrotto
 OK   tema del desktop           gtk-theme-name, gtk-application-prefer-dark-theme, GTK_THEME, kdeglobals
 OK   tema nativo                MacOS-Tahoe: gtk.css e gtk-dark.css letti, grigi del tema e contrasto ≥ 7:1
-OK   leggibilità                scuro/testo 18.2:1, scuro/fumetto mio 17.7:1, scuro/fumetto ricevuto 15.3:1, chiaro/testo 16.6:1, chiaro/fumetto mio 15.1:1, chiaro/fumetto ricevuto 17.7:1
+OK   leggibilità                scuro/testo 15.8:1, scuro/fumetto mio 6.8:1, scuro/fumetto ricevuto 12.1:1, chiaro/testo 14.6:1, chiaro/fumetto mio 15.8:1, chiaro/fumetto ricevuto 17.5:1
 OK   rubrica                    2 contatti, FN e N, numeri con + e senza
 OK   nomi e numeri              nomi, iniziali, numeri, gruppi, canali, stati, pesi, durate, id
 OK   canale audio               microfono: Default Audio Device · casse: Default Audio Device · 2 frame da 60 ms pronti

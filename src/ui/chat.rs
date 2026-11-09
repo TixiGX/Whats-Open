@@ -324,9 +324,12 @@ impl App {
             // Lo sticker non ha fumetto: la riga con l'orario deve restare
             // larga quanto la figura, non quanto tutta la colonna (altrimenti
             // l'ora vola dall'altra parte della finestra).
+            // La piastrella "Scarica" ha la stessa misura di una foto senza
+            // anteprima: il fumetto trasparente deve contenerla, altrimenti
+            // l'ora finisce sotto un bordo che non c'è.
             let width = match self.thumb_texture(index) {
                 Some(texture) => fit_size(texture.size_vec2(), 150.0, 150.0).x.max(112.0),
-                None => 200.0,
+                None => ui.available_width().clamp(180.0, 252.0),
             };
             return Some(width);
         }
