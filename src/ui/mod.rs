@@ -167,6 +167,9 @@ pub struct App {
     pub attach_rx: Option<Receiver<Option<PathBuf>>>,
 
     pub config: Config,
+    /// Ultima notifica di sistema per chat: evita raffiche quando arrivano
+    /// più messaggi di seguito mentre la finestra è in secondo piano.
+    pub notify_last: HashMap<String, Instant>,
     /// Diventa vera quando una seconda istanza chiede di mostrare la finestra.
     pub focus_flag: Option<Arc<AtomicBool>>,
     pub toast: Option<Toast>,
@@ -193,9 +196,12 @@ impl App {
         let config = Config::load(&paths.data);
         // Il tema si decide una volta, prima di disegnare: così la prima
         // finestra ha già i colori giusti e non lampeggia.
-        let (mode, source) = crate::theme::resolve(&config.theme);
-        crate::theme::set(mode, source);
+        let detected = crate::theme::resolve(&config.theme);
+        crate::theme::set(&detected);
         crate::theme::apply(&cc.egui_ctx, config.system_fonts);
+        // Le notifiche usano il contesto solo per riportare la finestra
+        // davanti quando si clicca: nessun altro legame con la UI.
+        crate::notify::init(&cc.egui_ctx, config.notifications);
         let store = Store::open(&paths.db)?;
         // La mappatura LID ↔ numero va ripresa da disco *prima* di leggere
         // chat e contatti: è quella che tiene uniti i due indirizzi dello
@@ -278,6 +284,7 @@ impl App {
             rec_path: PathBuf::new(),
             attach_rx: None,
             config,
+            notify_last: HashMap::new(),
             focus_flag: None,
             toast: None,
             demo: false,
@@ -347,6 +354,62 @@ impl App {
             text: text.into(),
             at: Instant::now(),
         });
+    }
+
+    /// Notifica di sistema per un messaggio in arrivo. Si tace quando la chat
+    /// è già aperta e la finestra è davanti; una raffica di messaggi della
+    /// stessa chat produce al massimo una notifica ogni due secondi.
+    fn notify_message(&mut self, title: &str, message: &Message) {
+        if !crate::notify::enabled() || self.demo || message.kind == Kind::System {
+            return;
+        }
+        let focused = self.ctx.input(|input| input.focused);
+        if focused && self.selected.as_deref() == Some(message.chat_id.as_str()) {
+            return;
+        }
+        if let Some(last) = self.notify_last.get(&message.chat_id) {
+            if last.elapsed() < Duration::from_secs(2) {
+                return;
+            }
+        }
+        let body = message.chat_preview();
+        if body.is_empty() {
+            return;
+        }
+        crate::notify::send(title, &util::truncate(&body, 180), 1);
+        self.notify_last
+            .insert(message.chat_id.clone(), Instant::now());
+    }
+
+    /// Chiamata in arrivo: notifica critica solo se la finestra non è davanti
+    /// (altrimenti il pannello della chiamata è già a schermo).
+    fn notify_call(&mut self, peer: &str, video: bool) {
+        if !crate::notify::enabled() || self.demo {
+            return;
+        }
+        if self.ctx.input(|input| input.focused) {
+            return;
+        }
+        let who = self.name_of(peer);
+        let summary = if video {
+            format!("Videochiamata da {who}")
+        } else {
+            format!("Chiamata da {who}")
+        };
+        crate::notify::send(&summary, "Apri Whats-Open per rispondere.", 2);
+    }
+
+    fn notify_missed(&mut self, peer: &str, video: bool) {
+        if !crate::notify::enabled() || self.demo {
+            return;
+        }
+        let who = self.name_of(peer);
+        let summary = if video {
+            format!("Videochiamata persa · {who}")
+        } else {
+            format!("Chiamata persa · {who}")
+        };
+        crate::notify::send(&summary, "Nessuna risposta.", 1);
     }
 
     // ── contatti, foto profilo, chiamate ─────────────────────────────────
@@ -983,14 +1046,19 @@ impl App {
             (Some(call), phase) if phase != CallPhase::Active => call.since,
             _ => Instant::now(),
         };
+        let incoming = phase == CallPhase::Ringing
+            && previous.map(|call| call.phase) != Some(CallPhase::Ringing);
         self.call = Some(CallUi {
-            peer,
+            peer: peer.clone(),
             phase,
             video,
             since,
             muted,
             camera_on,
         });
+        if incoming {
+            self.notify_call(&peer, video);
+        }
     }
 
     fn apply_missed_call(&mut self, peer: String, video: bool) {
@@ -1014,6 +1082,7 @@ impl App {
         self.ingest(message);
         let who = self.name_of(&peer);
         self.note(format!("{label} · {who}"));
+        self.notify_missed(&peer, video);
     }
 
     pub fn start_call(&mut self, video: bool) {
@@ -1439,6 +1508,7 @@ impl App {
                 .map(|chat| self.title_for(chat))
                 .unwrap_or_default();
             self.note(format!("Nuovo messaggio da {title}"));
+            self.notify_message(&title, &message);
         }
     }
 
@@ -1854,6 +1924,13 @@ impl eframe::App for App {
                     egui::UserAttentionType::Informational,
                 ));
             }
+        }
+        // Clic su una notifica di sistema: la finestra torna davanti.
+        if crate::notify::take_focus() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
         }
         self.drain_events();
         self.tick(&ctx);

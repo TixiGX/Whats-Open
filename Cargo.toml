@@ -69,7 +69,10 @@ whatsapp-rust = { version = "=0.7.0", default-features = false, features = [
 # uccide con SIGKILL. Il binario cresce di qualche MB, ma la compilazione
 # riesce ovunque.
 [profile.release]
-opt-level = 3
+# `s` invece di `3`: il client passa quasi tutto il tempo fermo, quindi si
+# privilegia la dimensione del binario (circa il 15% in meno) senza perdere
+# nulla di percepibile. LTO resta spento di proposito.
+opt-level = "s"
 codegen-units = 16
 lto = false
 strip = true

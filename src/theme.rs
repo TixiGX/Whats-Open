@@ -1,16 +1,22 @@
-//! Tema monocromatico: nero, bianco e poche sfumature di grigio.
+//! Tema monocromatico che parte dai colori veri del desktop.
 //!
-//! Il tema segue quello della distribuzione: si guarda `GTK_THEME`, le
-//! preferenze GNOME (colore chiaro/scuro), `settings.ini` di GTK 3 e 4 e
-//! `kdeglobals`. Nessuna dipendenza in più, nessun demone: solo la lettura di
-//! pochi file e, se c'è una sessione D-Bus, una domanda a `gsettings`.
+//! Il client non disegna con GTK, ma può leggere il tema nativo: si prende il
+//! nome del tema (`GTK_THEME`, `gsettings`, `settings.ini`, `kdeglobals`), si
+//! apre il suo `gtk.css` (o `gtk-dark.css`) e si leggono le `@define-color`
+//! che ogni tema GTK deve dichiarare — sfondo, caselle, testo, selezione.
+//! Da lì nascono le tinte della tavolozza: si tiene la luminosità esatta del
+//! tema e la si porta in scala di grigi, perché l'interfaccia resta
+//! monocromatica come da progetto. Un tema "MacOS Tahoe" darà quindi i suoi
+//! grigi caldi, Adwaita i suoi, Breeze i suoi.
 //!
-//! La tavolozza resta volutamente monocromatica: cambia la luminosità, non i
-//! colori. Il tema chiaro usa bolle inviate scure e ricevute bianche, quello
-//! scuro il contrario.
+//! Se il tema non si trova o non è leggibile si torna alle due tavolozze
+//! incorporate: l'app non resta mai senza colori. Nessuna dipendenza in più,
+//! nessun demone: solo file di testo e, su GNOME, una domanda a `gsettings`.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex, RwLock};
 
 use egui::{Color32, FontFamily, FontId, Stroke, TextStyle};
 
@@ -33,12 +39,6 @@ impl Mode {
         }
     }
 }
-
-/// 1 = scuro (predefinito), 2 = chiaro.
-static MODE: AtomicU8 = AtomicU8::new(1);
-static SOURCE: Mutex<String> = Mutex::new(String::new());
-/// La ricerca nel desktop si fa una volta sola: `gsettings` è un processo.
-static DETECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -102,15 +102,155 @@ impl Palette {
             online: Color32::from_rgb(70, 70, 74),
         }
     }
+
+    /// Tavolozza costruita sui colori del tema nativo: le tinte vengono
+    /// ridotte a grigi (il progetto resta monocromatico) mantenendo il
+    /// chiaroscuro del tema, poi si garantisce il contrasto del testo.
+    pub fn from_native(native: &NativeTheme) -> Self {
+        let preset = if native.dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
+        let bg = gray_color(native.bg);
+        let base = gray_color(native.base);
+        let panel = if (base.r() as i16 - bg.r() as i16).abs() < 4 {
+            shift(bg, if native.dark { 6 } else { -4 })
+        } else {
+            base
+        };
+        let surface = mix(panel, bg, if native.dark { 0.35 } else { 0.25 });
+        let selected_gray = gray_color(native.selected);
+        let mut text = gray_color(native.fg);
+        if contrast(text, bg) < 7.0 {
+            // Tema con testo poco contrastato: meglio leggibile che fedele.
+            text = preset.text;
+        }
+        // Il testo secondario si allontana dallo sfondo finché non resta
+        // leggibile anche su temi con poco contrasto.
+        let mut muted = mix(text, bg, 0.38);
+        for step in [0.30, 0.22, 0.14] {
+            if contrast(muted, bg) >= 3.0 {
+                break;
+            }
+            muted = mix(text, bg, step);
+        }
+        let mut faint = mix(text, bg, 0.57);
+        for step in [0.48, 0.42, 0.36] {
+            if contrast(faint, bg) >= 2.2 {
+                break;
+            }
+            faint = mix(text, bg, step);
+        }
+        let hover = mix(surface, text, if native.dark { 0.10 } else { 0.07 });
+        let border = mix(bg, text, if native.dark { 0.22 } else { 0.14 });
+        // La bolla inviata resta il segno forte della chat: la sua luminosità
+        // arriva dall'accento del tema, ma viene spinta dove il contrasto è
+        // sicuro (scura su tema chiaro, chiara su tema scuro).
+        let (own_bubble, own_text) = if native.dark {
+            (Color32::from_gray(selected_gray.r().clamp(200, 244)), Color32::from_gray(10))
+        } else {
+            (Color32::from_gray(selected_gray.r().clamp(18, 70)), Color32::from_gray(246))
+        };
+        let in_bubble = if native.dark {
+            shift(surface, 8)
+        } else {
+            panel
+        };
+        let in_text = if contrast(text, in_bubble) >= 7.0 {
+            text
+        } else {
+            preset.in_text
+        };
+        Self {
+            bg,
+            panel,
+            surface,
+            hover,
+            border,
+            text,
+            muted,
+            faint,
+            white: Color32::WHITE,
+            own_bubble,
+            own_text,
+            in_bubble,
+            in_text,
+            danger: preset.danger,
+            online: preset.online,
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "sfondo {} · pannello {} · testo {} · bolle {}",
+            hex(self.bg),
+            hex(self.panel),
+            hex(self.text),
+            hex(self.own_bubble)
+        )
+    }
 }
 
-/// Tavolozza corrente. Costruirla è banale: qualche decina di byte per
-/// fotogramma, nessuna allocazione.
+pub fn hex(color: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
+}
+
+/// Tema GTK trovato su disco, già letto nei suoi colori principali.
+#[derive(Clone, Debug)]
+pub struct NativeTheme {
+    pub name: String,
+    /// Cartella da cui arrivano i colori (`gtk-3.0`, `gtk-4.0`, `kdeglobals`).
+    pub variant: String,
+    pub dark: bool,
+    /// Quante `@define-color` sono state lette: 0 = nessun colore trovato.
+    pub colors: usize,
+    pub bg: Color32,
+    pub base: Color32,
+    pub fg: Color32,
+    pub selected: Color32,
+}
+
+impl NativeTheme {
+    pub fn summary(&self) -> String {
+        format!("{} ({}, {})", self.name, self.variant, if self.dark { "scuro" } else { "chiaro" })
+    }
+}
+
+/// Esito della scelta del tema: modalità, provenienza e, se c'è, il tema
+/// nativo da cui sono stati presi i colori.
+#[derive(Clone, Debug)]
+pub struct Detected {
+    pub mode: Mode,
+    pub source: String,
+    pub native: Option<NativeTheme>,
+}
+
+impl Detected {
+    fn preset(mode: Mode, source: impl Into<String>) -> Self {
+        Self {
+            mode,
+            source: source.into(),
+            native: None,
+        }
+    }
+}
+
+/// 1 = scuro (predefinito), 2 = chiaro.
+static MODE: AtomicU8 = AtomicU8::new(1);
+static SOURCE: Mutex<String> = Mutex::new(String::new());
+static PALETTE: LazyLock<RwLock<Palette>> = LazyLock::new(|| RwLock::new(Palette::dark()));
+/// Il tema "automatico" si cerca una volta sola; poi si riusa.
+static AUTO: LazyLock<Mutex<Option<Detected>>> = LazyLock::new(|| Mutex::new(None));
+/// Tema nativo in uso, per la diagnostica.
+static CURRENT_NATIVE: LazyLock<Mutex<Option<NativeTheme>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Tavolozza corrente.
 pub fn pal() -> Palette {
-    if MODE.load(Ordering::Relaxed) == 2 {
-        Palette::light()
-    } else {
-        Palette::dark()
+    match PALETTE.read() {
+        Ok(guard) => *guard,
+        Err(poisoned) => *poisoned.into_inner(),
     }
 }
 
@@ -122,66 +262,335 @@ pub fn mode() -> Mode {
     }
 }
 
-/// Da dove viene la scelta ("GTK_THEME=…", "kdeglobals", …): finisce in
-/// `--doctor` e nelle impostazioni, così si capisce perché il tema è quello.
+/// Da dove viene la scelta ("GTK_THEME=…", "tema GTK MacOS-Tahoe (gtk-3.0)", …).
 pub fn source() -> String {
     SOURCE
         .lock()
         .map(|text| text.clone())
-        .unwrap_or_else(|_| String::new())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
 }
 
-pub fn set(mode: Mode, source: impl Into<String>) {
-    MODE.store(if mode.is_dark() { 1 } else { 2 }, Ordering::Relaxed);
+/// Il tema nativo attualmente in uso, se i colori arrivano dal desktop.
+pub fn native() -> Option<NativeTheme> {
+    CURRENT_NATIVE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// Applica una scelta: modalità, provenienza e tavolozza.
+pub fn set(detected: &Detected) {
+    MODE.store(if detected.mode.is_dark() { 1 } else { 2 }, Ordering::Relaxed);
     if let Ok(mut current) = SOURCE.lock() {
-        *current = source.into();
+        *current = detected.source.clone();
+    }
+    let palette = match detected.native.as_ref() {
+        Some(native) => Palette::from_native(native),
+        None if detected.mode.is_dark() => Palette::dark(),
+        None => Palette::light(),
+    };
+    if let Ok(mut current) = PALETTE.write() {
+        *current = palette;
+    }
+    if let Ok(mut current) = CURRENT_NATIVE.lock() {
+        *current = detected.native.clone();
     }
 }
 
 /// Traduce la preferenza dell'utente (`auto`, `dark`, `light`) in un tema.
-pub fn resolve(preference: &str) -> (Mode, String) {
+pub fn resolve(preference: &str) -> Detected {
     match preference.trim().to_ascii_lowercase().as_str() {
-        "dark" | "scuro" => (Mode::Dark, "impostazione".to_string()),
-        "light" | "chiaro" => (Mode::Light, "impostazione".to_string()),
+        "dark" | "scuro" => Detected {
+            mode: Mode::Dark,
+            source: "impostazione".to_string(),
+            native: native_for(Mode::Dark),
+        },
+        "light" | "chiaro" => Detected {
+            mode: Mode::Light,
+            source: "impostazione".to_string(),
+            native: native_for(Mode::Light),
+        },
         _ => {
-            // Una sola ricerca nel desktop per avvio: la seconda chiamata
-            // (impostazioni, ridisegni) riusa quello che si è già trovato.
-            if DETECTED.swap(true, Ordering::Relaxed) {
-                (mode(), source())
-            } else {
-                detect()
+            if let Some(cached) = AUTO.lock().ok().and_then(|guard| guard.clone()) {
+                return cached;
             }
+            let detected = detect_detailed();
+            if let Ok(mut guard) = AUTO.lock() {
+                *guard = Some(detected.clone());
+            }
+            detected
         }
     }
 }
 
 /// Tema della distribuzione, in ordine di autorevolezza.
 pub fn detect() -> (Mode, String) {
+    let detected = detect_detailed();
+    (detected.mode, detected.source)
+}
+
+/// Come [`detect`], ma tiene anche i colori del tema nativo.
+pub fn detect_detailed() -> Detected {
     if let Ok(value) = std::env::var("WHATS_OPEN_THEME") {
         match value.trim().to_ascii_lowercase().as_str() {
-            "dark" | "scuro" | "1" | "true" => return (Mode::Dark, "WHATS_OPEN_THEME".into()),
-            "light" | "chiaro" | "0" | "false" => return (Mode::Light, "WHATS_OPEN_THEME".into()),
+            "dark" | "scuro" | "1" | "true" => {
+                return Detected::preset(Mode::Dark, "WHATS_OPEN_THEME");
+            }
+            "light" | "chiaro" | "0" | "false" => {
+                return Detected::preset(Mode::Light, "WHATS_OPEN_THEME");
+            }
             _ => {}
         }
     }
-    if let Ok(value) = std::env::var("GTK_THEME") {
-        if !value.trim().is_empty() {
-            return (
-                mode_from_name(&value),
-                format!("GTK_THEME={value}"),
-            );
+
+    let desktop = desktop();
+    if let Some(name) = desktop.name.as_deref() {
+        if let Some(native) = load_native_theme(name, desktop.hint) {
+            let mode = if native.dark { Mode::Dark } else { Mode::Light };
+            return Detected {
+                mode,
+                source: format!("tema GTK {} ({})", native.summary(), desktop.source),
+                native: Some(native),
+            };
         }
     }
-    if let Some((mode, source)) = from_gsettings() {
-        return (mode, source);
+    if let Some(native) = desktop.kde.as_ref().and_then(kde_native) {
+        return Detected {
+            mode: if native.dark { Mode::Dark } else { Mode::Light },
+            source: format!("KDE: {}", native.summary()),
+            native: Some(native),
+        };
     }
-    if let Some((mode, source)) = from_gtk_settings() {
-        return (mode, source);
+    let mode = desktop
+        .hint
+        .or_else(|| desktop.name.as_deref().map(mode_from_name))
+        .unwrap_or(Mode::Dark);
+    Detected::preset(
+        mode,
+        if desktop.source.is_empty() {
+            "predefinito".to_string()
+        } else {
+            desktop.source
+        },
+    )
+}
+
+/// Cerca il tema del desktop con la modalità richiesta. Serve alle
+/// preferenze esplicite: se il tema non ha quella variante si usano le
+/// tavolozze incorporate, così `--theme light` non diventa un tema scuro.
+fn native_for(mode: Mode) -> Option<NativeTheme> {
+    let desktop = desktop();
+    let name = desktop.name?;
+    let native = load_native_theme(&name, Some(mode))?;
+    if native.dark == mode.is_dark() {
+        Some(native)
+    } else {
+        None
     }
-    if let Some((mode, source)) = from_kde() {
-        return (mode, source);
+}
+
+#[derive(Default)]
+struct Desktop {
+    name: Option<String>,
+    source: String,
+    hint: Option<Mode>,
+    /// Colori letti da `kdeglobals`, se non c'è un tema GTK.
+    kde: Option<KdeColors>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct KdeColors {
+    bg: Color32,
+    base: Color32,
+    fg: Color32,
+    selected: Color32,
+}
+
+fn desktop() -> Desktop {
+    // 1. La variabile d'ambiente è la più esplicita.
+    if let Ok(value) = std::env::var("GTK_THEME") {
+        let value = value.trim();
+        if !value.is_empty() {
+            let (name, variant) = match value.split_once(':') {
+                Some((name, variant)) => (name.trim(), Some(variant.trim())),
+                None => (value, None),
+            };
+            let hint = variant.map(|variant| {
+                if variant.eq_ignore_ascii_case("dark") {
+                    Mode::Dark
+                } else if variant.eq_ignore_ascii_case("light") {
+                    Mode::Light
+                } else {
+                    mode_from_name(variant)
+                }
+            });
+            return Desktop {
+                name: Some(name.to_string()),
+                source: format!("GTK_THEME={value}"),
+                hint,
+                kde: None,
+            };
+        }
     }
-    (Mode::Dark, "predefinito".into())
+
+    let xdg = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let gnome_like = xdg.is_empty()
+        || ["gnome", "unity", "cinnamon", "budgie", "pantheon", "elementary"]
+            .iter()
+            .any(|desktop| xdg.contains(desktop));
+
+    // 2. Su GNOME comanda gsettings; altrove si legge prima il file (nessun
+    //    processo avviato). In entrambi i casi si prova anche l'altra fonte.
+    let mut hint_from_scheme = None;
+    if gnome_like {
+        if let Some((name, hint)) = gsettings_theme() {
+            hint_from_scheme = hint;
+            if let Some(name) = name {
+                return Desktop {
+                    name: Some(name.clone()),
+                    source: format!("GNOME: {name}"),
+                    hint: hint_from_scheme,
+                    kde: None,
+                };
+            }
+        }
+    }
+    if let Some((name, hint)) = gtk_settings_ini() {
+        return Desktop {
+            name: Some(name.clone()),
+            source: format!("gtk settings.ini: {name}"),
+            hint: hint.or(hint_from_scheme),
+            kde: None,
+        };
+    }
+    if !gnome_like {
+        if let Some((name, hint)) = gsettings_theme() {
+            hint_from_scheme = hint_from_scheme.or(hint);
+            if let Some(name) = name {
+                return Desktop {
+                    name: Some(name.clone()),
+                    source: format!("GNOME: {name}"),
+                    hint: hint_from_scheme,
+                    kde: None,
+                };
+            }
+        }
+    }
+    if let Some(kde) = kde_colors() {
+        return Desktop {
+            name: None,
+            source: "kdeglobals".to_string(),
+            hint: None,
+            kde: Some(kde),
+        };
+    }
+    Desktop {
+        name: None,
+        source: String::new(),
+        hint: hint_from_scheme,
+        kde: None,
+    }
+}
+
+fn gtk_settings_ini() -> Option<(String, Option<Mode>)> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    for variant in ["gtk-4.0", "gtk-3.0"] {
+        let path = home.join(".config").join(variant).join("settings.ini");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = ini_value(&text, "gtk-theme-name");
+        let dark = ini_value(&text, "gtk-application-prefer-dark-theme").and_then(|value| {
+            match value.trim() {
+                "1" | "true" | "True" => Some(Mode::Dark),
+                "0" | "false" | "False" => None,
+                _ => None,
+            }
+        });
+        if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
+            return Some((name.trim().to_string(), dark));
+        }
+    }
+    None
+}
+
+fn gsettings_theme() -> Option<(Option<String>, Option<Mode>)> {
+    // Senza sessione D-Bus `gsettings` non ha dove leggere.
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        return None;
+    }
+    let read = |key: &str| -> Option<String> {
+        let output = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", key])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let scheme = read("color-scheme");
+    let mode = scheme.as_deref().map(|scheme| {
+        if scheme.contains("prefer-dark") {
+            Mode::Dark
+        } else {
+            Mode::Light
+        }
+    });
+    let name = read("gtk-theme")
+        .map(|name| name.trim_matches('\'').trim_matches('"').trim().to_string())
+        .filter(|name| !name.is_empty());
+    if name.is_none() && mode.is_none() {
+        return None;
+    }
+    Some((name, mode))
+}
+
+fn kde_colors() -> Option<KdeColors> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let text = std::fs::read_to_string(home.join(".config/kdeglobals")).ok()?;
+    let bg = parse_decimal_color(ini_section_value(&text, "Colors:Window", "BackgroundNormal")?)?;
+    let fg = ini_section_value(&text, "Colors:Window", "ForegroundNormal")
+        .and_then(parse_decimal_color)
+        .unwrap_or(Color32::from_gray(230));
+    let base = ini_section_value(&text, "Colors:View", "BackgroundNormal")
+        .and_then(parse_decimal_color)
+        .unwrap_or(bg);
+    let selected = ini_section_value(&text, "Colors:Selection", "BackgroundNormal")
+        .and_then(parse_decimal_color)
+        .unwrap_or(fg);
+    Some(KdeColors {
+        bg,
+        base,
+        fg,
+        selected,
+    })
+}
+
+fn kde_native(colors: &KdeColors) -> Option<NativeTheme> {
+    Some(NativeTheme {
+        name: "KDE".to_string(),
+        variant: "kdeglobals".to_string(),
+        dark: luminance(colors.bg) < 0.5,
+        colors: 4,
+        bg: colors.bg,
+        base: colors.base,
+        fg: colors.fg,
+        selected: colors.selected,
+    })
+}
+
+fn parse_decimal_color(text: &str) -> Option<Color32> {
+    let parts: Vec<u8> = text
+        .split(',')
+        .filter_map(|part| part.trim().parse::<u8>().ok())
+        .collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    Some(Color32::from_rgb(parts[0], parts[1], parts[2]))
 }
 
 /// Mescola due colori (0 = `a`, 1 = `b`). Serve per le sfumature interne ai
@@ -197,6 +606,46 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+fn shift(color: Color32, delta: i16) -> Color32 {
+    let apply = |value: u8| (value as i16 + delta).clamp(0, 255) as u8;
+    Color32::from_rgb(apply(color.r()), apply(color.g()), apply(color.b()))
+}
+
+fn gray_color(color: Color32) -> Color32 {
+    Color32::from_gray(gray(color))
+}
+
+/// Luminosità percepita di un colore (0-255): è il ponte fra il tema del
+/// desktop e la tavolozza monocromatica.
+pub fn gray(color: Color32) -> u8 {
+    let value = 0.2126 * color.r() as f32 + 0.7152 * color.g() as f32 + 0.0722 * color.b() as f32;
+    value.round().clamp(0.0, 255.0) as u8
+}
+
+/// Luminanza relativa 0..1 (come WCAG, con la correzione gamma).
+fn luminance(color: Color32) -> f32 {
+    fn channel(value: u8) -> f32 {
+        let value = value as f32 / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+}
+
+/// Rapporto di contrasto WCAG fra due colori (1:1 … 21:1).
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let (first, second) = (luminance(a), luminance(b));
+    let (high, low) = if first > second {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    (high + 0.05) / (low + 0.05)
+}
+
 fn mode_from_name(name: &str) -> Mode {
     let lower = name.to_ascii_lowercase();
     if lower.contains("dark") || lower.contains("scuro") || lower.contains("black") {
@@ -206,86 +655,396 @@ fn mode_from_name(name: &str) -> Mode {
     }
 }
 
-fn from_gsettings() -> Option<(Mode, String)> {
-    // Senza sessione D-Bus `gsettings` non ha dove leggere: si evita di
-    // avviare un processo inutile.
-    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
-        return None;
-    }
-    let read = |key: &str| -> Option<String> {
-        let output = std::process::Command::new("gsettings")
-            .args(["get", "org.gnome.desktop.interface", key])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    };
-    if let Some(scheme) = read("color-scheme") {
-        if scheme.contains("prefer-dark") {
-            return Some((Mode::Dark, "GNOME: preferisce scuro".into()));
-        }
-        if scheme.contains("prefer-light") || scheme.contains("default") {
-            return Some((Mode::Light, "GNOME: preferisce chiaro".into()));
-        }
-    }
-    if let Some(theme) = read("gtk-theme") {
-        let theme = theme.trim_matches('\'').to_string();
-        if !theme.is_empty() {
-            return Some((mode_from_name(&theme), format!("tema GTK {theme}")));
-        }
-    }
-    None
-}
+// ── lettura del tema GTK ─────────────────────────────────────────────────
 
-fn from_gtk_settings() -> Option<(Mode, String)> {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
-    for variant in ["gtk-4.0", "gtk-3.0"] {
-        let path = home.join(".config").join(variant).join("settings.ini");
-        let Ok(text) = std::fs::read_to_string(&path) else {
+/// Apre il tema `name` e ne legge i colori. `want` è la variante richiesta
+/// (chiara/scura); se il tema non ce l'ha si restituisce `None` e chi chiama
+/// usa la tavolozza incorporata.
+pub fn load_native_theme(name: &str, want: Option<Mode>) -> Option<NativeTheme> {
+    let root = theme_root(name)?;
+    let mut files: Vec<(&'static str, PathBuf)> = Vec::new();
+    let variants: [(&'static str, &'static str); 4] = match want {
+        Some(Mode::Dark) => [
+            ("gtk-3.0", "gtk-dark.css"),
+            ("gtk-4.0", "gtk-dark.css"),
+            ("gtk-3.0", "gtk.css"),
+            ("gtk-4.0", "gtk.css"),
+        ],
+        _ => [
+            ("gtk-3.0", "gtk.css"),
+            ("gtk-4.0", "gtk.css"),
+            ("gtk-3.0", "gtk-dark.css"),
+            ("gtk-4.0", "gtk-dark.css"),
+        ],
+    };
+    for (variant, file) in variants {
+        let path = root.join(variant).join(file);
+        if path.is_file() && !files.iter().any(|(_, existing)| existing == &path) {
+            files.push((variant, path));
+        }
+    }
+
+    let mut fallback = None;
+    for (variant, path) in files {
+        let Some(defs) = read_theme_css(&path) else {
             continue;
         };
-        if let Some(dark) = ini_value(&text, "gtk-application-prefer-dark-theme") {
-            if matches!(dark.trim(), "1" | "true" | "True") {
-                return Some((Mode::Dark, format!("{variant}: preferisce scuro")));
+        let Some(colors) = pick_colors(&defs) else {
+            continue;
+        };
+        let dark = luminance(colors.bg) < 0.5;
+        let native = NativeTheme {
+            name: name.to_string(),
+            variant: variant.to_string(),
+            dark,
+            colors: defs.len(),
+            bg: colors.bg,
+            base: colors.base,
+            fg: colors.fg,
+            selected: colors.selected,
+        };
+        match want {
+            Some(mode) if native.dark != mode.is_dark() => {
+                if fallback.is_none() {
+                    fallback = Some(native);
+                }
             }
+            _ => return Some(native),
         }
-        if let Some(name) = ini_value(&text, "gtk-theme-name") {
-            if !name.is_empty() {
-                return Some((mode_from_name(&name), format!("tema GTK {name}")));
+    }
+    // Nessuna variante corrispondente: se chi chiama non ha chiesto una
+    // modalità precisa, va bene quella che c'è.
+    if want.is_none() {
+        fallback
+    } else {
+        None
+    }
+}
+
+
+fn theme_root(name: &str) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
+        roots.push(PathBuf::from(data).join("themes"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        roots.push(home.join(".themes"));
+        roots.push(home.join(".local/share/themes"));
+    }
+    roots.push(PathBuf::from("/usr/share/themes"));
+    roots.push(PathBuf::from("/usr/local/share/themes"));
+
+    for root in &roots {
+        let candidate = root.join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    // Nomi con maiuscole diverse fra loro (MacOS-Tahoe / macos-tahoe).
+    for root in &roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            if !is_dir {
+                continue;
+            }
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+            {
+                return Some(entry.path());
             }
         }
     }
     None
 }
 
-fn from_kde() -> Option<(Mode, String)> {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
-    let path = home.join(".config").join("kdeglobals");
-    let text = std::fs::read_to_string(&path).ok()?;
-    if let Some(scheme) = ini_value(&text, "ColorScheme") {
-        if !scheme.is_empty() {
-            return Some((mode_from_name(&scheme), format!("KDE: {scheme}")));
+const MAX_CSS_BYTES: u64 = 3_000_000;
+
+fn read_theme_css(path: &Path) -> Option<HashMap<String, String>> {
+    let mut visited = std::collections::HashSet::new();
+    let mut defs = HashMap::new();
+    read_css_into(path, &mut defs, &mut visited, 0)?;
+    if defs.is_empty() {
+        None
+    } else {
+        Some(defs)
+    }
+}
+
+fn read_css_into(
+    path: &Path,
+    defs: &mut HashMap<String, String>,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    depth: u8,
+) -> Option<()> {
+    if depth > 2 || visited.len() >= 16 {
+        return None;
+    }
+    let canonical = path.to_path_buf();
+    if !visited.insert(canonical.clone()) {
+        return Some(());
+    }
+    let meta = std::fs::metadata(&canonical).ok()?;
+    if meta.len() > MAX_CSS_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(&canonical).ok()?;
+    let text = strip_comments(&text);
+    for (name, value) in define_colors(&text) {
+        // Il primo file vince: gtk.css può importare altri fogli.
+        defs.entry(name).or_insert(value);
+    }
+    if depth < 2 {
+        for import in imports(&text) {
+            if import.starts_with("resource://") || import.starts_with("file://") {
+                continue;
+            }
+            let next = canonical
+                .parent()
+                .map(|parent| parent.join(&import))
+                .unwrap_or_else(|| PathBuf::from(&import));
+            if next.is_file() {
+                let _ = read_css_into(&next, defs, visited, depth + 1);
+            }
         }
     }
-    // `BackgroundNormal=239,240,241`: la luminanza dice più del nome.
-    if let Some(rgb) = ini_value(&text, "BackgroundNormal") {
-        let parts: Vec<f32> = rgb
-            .split(',')
-            .filter_map(|part| part.trim().parse::<f32>().ok())
-            .collect();
-        if parts.len() >= 3 {
-            let luminance = 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
-            let mode = if luminance < 128.0 {
-                Mode::Dark
-            } else {
-                Mode::Light
-            };
-            return Some((mode, "KDE: colore di sfondo".into()));
+    Some(())
+}
+
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("/*") {
+        out.push_str(&rest[..start]);
+        match rest[start + 2..].find("*/") {
+            Some(end) => rest = &rest[start + 2 + end + 2..],
+            None => return out,
         }
     }
-    None
+    out.push_str(rest);
+    out
+}
+
+fn define_colors(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let needle = "@define-color";
+    let mut cursor = 0;
+    while let Some(found) = text[cursor..].find(needle) {
+        let start = cursor + found + needle.len();
+        let rest = &text[start..];
+        let name_end = rest
+            .find(|ch: char| ch.is_whitespace())
+            .unwrap_or(rest.len());
+        let name = rest[..name_end].trim();
+        let after = &rest[name_end..];
+        let Some(end) = after.find(';') else {
+            break;
+        };
+        let value = after[..end].trim();
+        if !name.is_empty() && !value.is_empty() {
+            out.push((name.to_string(), value.to_string()));
+        }
+        cursor = start + name_end + end + 1;
+    }
+    out
+}
+
+fn imports(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    while let Some(found) = text[cursor..].find("@import") {
+        let start = cursor + found + "@import".len();
+        let rest = text[start..].trim_start();
+        let raw = if let Some(inner) = rest.strip_prefix("url(") {
+            inner
+                .split_once(')')
+                .map(|(value, _)| value.trim().trim_matches('"').trim_matches('\''))
+        } else {
+            rest.split_once(';')
+                .map(|(value, _)| value.trim().trim_matches('"').trim_matches('\''))
+        };
+        if let Some(raw) = raw {
+            if !raw.is_empty() {
+                out.push(raw.to_string());
+            }
+        }
+        cursor = start;
+    }
+    out
+}
+
+fn pick_colors(defs: &HashMap<String, String>) -> Option<Colors> {
+    let get = |names: &[&str]| -> Option<Color32> {
+        names
+            .iter()
+            .find_map(|name| defs.get(*name))
+            .and_then(|raw| resolve_color(raw, defs, 0))
+    };
+    let bg = get(&[
+        "theme_bg_color",
+        "window_bg_color",
+        "theme_unfocused_bg_color",
+        "headerbar_bg_color",
+        "theme_selected_bg_color",
+    ])?;
+    let base = get(&["theme_base_color", "view_bg_color", "card_bg_color"]).unwrap_or(bg);
+    let fg = get(&[
+        "theme_fg_color",
+        "window_fg_color",
+        "theme_text_color",
+        "view_fg_color",
+        "theme_selected_fg_color",
+    ])?;
+    let selected = get(&[
+        "theme_selected_bg_color",
+        "accent_bg_color",
+        "accent_color",
+        "theme_fg_color",
+    ])
+    .unwrap_or(fg);
+    Some(Colors {
+        bg,
+        base,
+        fg,
+        selected,
+    })
+}
+
+struct Colors {
+    bg: Color32,
+    base: Color32,
+    fg: Color32,
+    selected: Color32,
+}
+
+/// Risolve un valore CSS (`#rrggbb`, `rgb()`, `@nome`, `alpha()`, `mix()`,
+/// `shade()`) in un colore. Le funzioni si annidano: limite di profondità.
+fn resolve_color(raw: &str, defs: &HashMap<String, String>, depth: u8) -> Option<Color32> {
+    if depth > 8 {
+        return None;
+    }
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(name) = raw.strip_prefix('@') {
+        return resolve_color(defs.get(name.trim())?, defs, depth + 1);
+    }
+    if let Some(hex) = raw.strip_prefix('#') {
+        return color_from_hex(hex);
+    }
+    let head = raw
+        .split_once('(')
+        .map(|(head, _)| head.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if head.is_empty() {
+        return match raw.to_ascii_lowercase().as_str() {
+            "white" => Some(Color32::WHITE),
+            "black" => Some(Color32::BLACK),
+            "transparent" => Some(Color32::TRANSPARENT),
+            _ => None,
+        };
+    }
+    let args = split_args(raw);
+    match head.as_str() {
+        "rgb" | "rgba" => {
+            if args.len() < 3 {
+                return None;
+            }
+            let r = channel(args[0])?;
+            let g = channel(args[1])?;
+            let b = channel(args[2])?;
+            Some(Color32::from_rgb(r, g, b))
+        }
+        "alpha" => {
+            if args.len() < 2 {
+                return None;
+            }
+            // Per la tavolozza l'opacità non serve: il colore resta quello.
+            resolve_color(args[0], defs, depth + 1)
+        }
+        "mix" => {
+            if args.len() < 3 {
+                return None;
+            }
+            let a = resolve_color(args[0], defs, depth + 1)?;
+            let b = resolve_color(args[1], defs, depth + 1)?;
+            let t = args[2].trim().parse::<f32>().unwrap_or(0.5);
+            Some(mix(a, b, t))
+        }
+        "shade" => {
+            if args.len() < 2 {
+                return None;
+            }
+            let base = resolve_color(args[0], defs, depth + 1)?;
+            let factor = args[1].trim().parse::<f32>().unwrap_or(1.0);
+            let scale = |value: u8| (value as f32 * factor).round().clamp(0.0, 255.0) as u8;
+            Some(Color32::from_rgb(scale(base.r()), scale(base.g()), scale(base.b())))
+        }
+        _ => None,
+    }
+}
+
+fn split_args(raw: &str) -> Vec<&str> {
+    let inner = raw
+        .split_once('(')
+        .map(|(_, rest)| rest.trim_end_matches(')'))
+        .unwrap_or(raw);
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(inner[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(inner[start..].trim());
+    out
+}
+
+fn channel(text: &str) -> Option<u8> {
+    let text = text.trim();
+    if let Some(percent) = text.strip_suffix('%') {
+        let value = percent.trim().parse::<f32>().ok()?;
+        return Some((value / 100.0 * 255.0).round().clamp(0.0, 255.0) as u8);
+    }
+    let value = text.parse::<f32>().ok()?;
+    // `rgb(1 2 3)` non è valido in CSS, ma `rgba(0,0,0,0.5)` sì: i canali
+    // sono 0..255, l'alfa è gestito a parte e qui non arriva.
+    Some(value.round().clamp(0.0, 255.0) as u8)
+}
+
+fn color_from_hex(hex: &str) -> Option<Color32> {
+    let digits: Vec<u8> = hex
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .map(|ch| ch.to_digit(16).map(|value| value as u8))
+        .collect::<Option<Vec<u8>>>()?;
+    let expand = |value: u8| value * 17;
+    match digits.len() {
+        3 | 4 => Some(Color32::from_rgb(
+            expand(digits[0]),
+            expand(digits[1]),
+            expand(digits[2]),
+        )),
+        6 | 8 => Some(Color32::from_rgb(
+            digits[0] * 16 + digits[1],
+            digits[2] * 16 + digits[3],
+            digits[4] * 16 + digits[5],
+        )),
+        _ => None,
+    }
 }
 
 fn ini_value(text: &str, key: &str) -> Option<String> {
@@ -303,6 +1062,32 @@ fn ini_value(text: &str, key: &str) -> Option<String> {
     }
     None
 }
+
+fn ini_section_value(text: &str, section: &str, key: &str) -> Option<String> {
+    let mut inside = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            inside = line
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim()
+                .eq_ignore_ascii_case(section);
+            continue;
+        }
+        if !inside || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some((name, value)) = line.split_once('=') {
+            if name.trim().eq_ignore_ascii_case(key) {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+// ── font e stile egui ────────────────────────────────────────────────────
 
 /// Aggiunge i font di sistema come riserva: emoji, arabo, ebraico, devanagari,
 /// thai e CJK restano leggibili anche senza font dedicati nel binario.
@@ -431,9 +1216,9 @@ mod tests {
 
     #[test]
     fn le_preferenze_esplicite_vincono() {
-        assert_eq!(resolve("dark").0, Mode::Dark);
-        assert_eq!(resolve("chiaro").0, Mode::Light);
-        assert_eq!(resolve("light").0, Mode::Light);
+        assert_eq!(resolve("dark").mode, Mode::Dark);
+        assert_eq!(resolve("chiaro").mode, Mode::Light);
+        assert_eq!(resolve("light").mode, Mode::Light);
     }
 
     #[test]
@@ -441,6 +1226,64 @@ mod tests {
         assert_eq!(mode_from_name("Adwaita:dark"), Mode::Dark);
         assert_eq!(mode_from_name("BreezeDark"), Mode::Dark);
         assert_eq!(mode_from_name("Adwaita"), Mode::Light);
-        assert_eq!(ini_value("[General]\nColorScheme=BreezeDark\n", "ColorScheme").as_deref(), Some("BreezeDark"));
+        assert_eq!(
+            ini_value("[General]\nColorScheme=BreezeDark\n", "ColorScheme").as_deref(),
+            Some("BreezeDark")
+        );
+    }
+
+    #[test]
+    fn i_colori_css_si_leggono() {
+        let defs = HashMap::from([
+            ("base".to_string(), "#f5f5f7".to_string()),
+            ("accento".to_string(), "rgb(0, 122, 255)".to_string()),
+            ("tenue".to_string(), "alpha(@base, 0.5)".to_string()),
+            ("scuro".to_string(), "shade(@base, 0.2)".to_string()),
+            ("mescolato".to_string(), "mix(@base, black, 0.5)".to_string()),
+        ]);
+        assert_eq!(
+            resolve_color("@base", &defs, 0),
+            Some(Color32::from_rgb(245, 245, 247))
+        );
+        assert_eq!(
+            resolve_color("@accento", &defs, 0),
+            Some(Color32::from_rgb(0, 122, 255))
+        );
+        assert_eq!(
+            resolve_color("@tenue", &defs, 0),
+            Some(Color32::from_rgb(245, 245, 247))
+        );
+        assert_eq!(
+            resolve_color("@scuro", &defs, 0),
+            Some(Color32::from_rgb(49, 49, 49))
+        );
+        assert_eq!(
+            resolve_color("@mescolato", &defs, 0),
+            Some(Color32::from_rgb(123, 123, 124))
+        );
+        assert_eq!(resolve_color("white", &defs, 0), Some(Color32::WHITE));
+        assert_eq!(resolve_color("#fff", &defs, 0), Some(Color32::WHITE));
+    }
+
+    #[test]
+    fn un_tema_nativo_diventa_una_tavolozza_leggibile() {
+        let native = NativeTheme {
+            name: "MacOS-Tahoe".to_string(),
+            variant: "gtk-3.0".to_string(),
+            dark: false,
+            colors: 5,
+            bg: Color32::from_rgb(245, 245, 247),
+            base: Color32::from_rgb(255, 255, 255),
+            fg: Color32::from_rgb(29, 29, 31),
+            selected: Color32::from_rgb(0, 122, 255),
+        };
+        let palette = Palette::from_native(&native);
+        assert!(palette.bg.r() >= 230);
+        // La scala resta di grigi: nessun canale colorato.
+        assert_eq!(palette.bg.r(), palette.bg.b());
+        assert!(contrast(palette.text, palette.bg) >= 7.0);
+        assert!(contrast(palette.own_text, palette.own_bubble) >= 7.0);
+        assert!(contrast(palette.in_text, palette.in_bubble) >= 7.0);
+        assert!(palette.own_bubble.r() < palette.own_text.r());
     }
 }

@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::engine::extract::{self, Extracted};
 use crate::model::{Chat, Contact, Kind, Message, Status};
 use crate::store::Store;
+use crate::theme;
 use crate::util::{self, Paths};
 
 struct Check {
@@ -80,11 +81,15 @@ pub fn run() -> Report {
     section("media", &mut checks, || check_media(&root));
     section("configurazione", &mut checks, || check_config(&root));
     section("tema del desktop", &mut checks, || check_theme(&root));
+    section("tema nativo", &mut checks, || check_native_theme(&root));
     section("leggibilità", &mut checks, || check_palette());
     section("rubrica", &mut checks, || check_contacts(&root));
     section("nomi e numeri", &mut checks, || check_formatting());
     section("canale audio", &mut checks, || {
         crate::engine::call::self_test()
+    });
+    section("notifiche di sistema", &mut checks, || {
+        crate::notify::probe()
     });
     section("percorso video", &mut checks, || {
         crate::engine::video::self_test()
@@ -754,6 +759,156 @@ fn check_theme(root: &Path) -> Result<String, String> {
         }
     }
     result.map(|_| "gtk-theme-name, gtk-application-prefer-dark-theme, GTK_THEME, kdeglobals".to_string())
+}
+
+/// Il caso vero: un tema GTK con i suoi colori (MacOS Tahoe), letto dal CSS
+/// e trasformato in una tavolozza monocromatica ma con le sue tinte.
+fn check_native_theme(root: &Path) -> Result<String, String> {
+    let home = root.join("home-nativo");
+    let theme_dir = home.join(".themes/MacOS-Tahoe/gtk-3.0");
+    std::fs::create_dir_all(&theme_dir).map_err(|error| format!("{error}"))?;
+    std::fs::create_dir_all(home.join(".config/gtk-3.0")).map_err(|error| format!("{error}"))?;
+    std::fs::write(
+        theme_dir.join("gtk.css"),
+        "@define-color theme_bg_color #f2f2f4;\n\
+         @define-color theme_base_color #ffffff;\n\
+         @define-color theme_fg_color #1d1d1f;\n\
+         @define-color theme_text_color #1d1d1f;\n\
+         @define-color theme_selected_bg_color #007aff;\n",
+    )
+    .map_err(|error| format!("{error}"))?;
+    std::fs::write(
+        theme_dir.join("gtk-dark.css"),
+        "@define-color theme_bg_color #1e1e20;\n\
+         @define-color theme_base_color #2a2a2d;\n\
+         @define-color theme_fg_color #f2f2f4;\n\
+         @define-color theme_selected_bg_color #0a84ff;\n",
+    )
+    .map_err(|error| format!("{error}"))?;
+    std::fs::write(
+        home.join(".config/gtk-3.0/settings.ini"),
+        "[Settings]\ngtk-theme-name=MacOS-Tahoe\n",
+    )
+    .map_err(|error| format!("{error}"))?;
+
+    let previous_home = std::env::var_os("HOME");
+    let previous_data = std::env::var_os("XDG_DATA_HOME");
+    let previous_theme = std::env::var_os("WHATS_OPEN_THEME");
+    let previous_gtk = std::env::var_os("GTK_THEME");
+    let previous_dbus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+    std::env::set_var("HOME", &home);
+    std::env::set_var("XDG_DATA_HOME", home.join(".local/share"));
+    std::env::remove_var("WHATS_OPEN_THEME");
+    std::env::remove_var("GTK_THEME");
+    std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+
+    let mut result = Ok(());
+    if result.is_ok() {
+        match theme::load_native_theme("MacOS-Tahoe", Some(theme::Mode::Light)) {
+            Some(native) => {
+                if native.dark || native.name != "MacOS-Tahoe" || native.colors < 4 {
+                    result = Err(format!("tema chiaro letto male: {:?}", native));
+                }
+                if theme::gray(native.bg) < 230 {
+                    result = Err(format!("sfondo non letto: {}", theme::hex(native.bg)));
+                }
+            }
+            None => result = Err("tema MacOS-Tahoe non trovato".to_string()),
+        }
+    }
+
+    // La variante scura deve essere letta da gtk-dark.css.
+    if result.is_ok() {
+        match theme::load_native_theme("MacOS-Tahoe", Some(theme::Mode::Dark)) {
+            Some(native) if native.dark => {}
+            other => {
+                result = Err(format!(
+                    "variante scura non letta: {:?}",
+                    other.map(|native| native.variant)
+                ))
+            }
+        }
+    }
+
+    // Senza variante corrispondente non si inventa: meglio la tavolozza
+    // incorporata che un tema chiaro spacciato per scuro.
+    if result.is_ok() {
+        let only_light = root.join("home-solo-chiaro");
+        let dir = only_light.join(".themes/SoloChiaro/gtk-3.0");
+        std::fs::create_dir_all(&dir).ok();
+        std::fs::write(
+            dir.join("gtk.css"),
+            "@define-color theme_bg_color #ffffff;\n\
+             @define-color theme_fg_color #000000;\n",
+        )
+        .ok();
+        std::env::set_var("HOME", &only_light);
+        if theme::load_native_theme("SoloChiaro", Some(theme::Mode::Dark)).is_some() {
+            result = Err("un tema chiaro è stato spacciato per scuro".to_string());
+        }
+        std::env::set_var("HOME", &home);
+    }
+
+    // La scoperta completa deve riconoscere il tema da settings.ini.
+    if result.is_ok() {
+        let detected = theme::detect_detailed();
+        if detected.mode != theme::Mode::Light {
+            result = Err(format!("modalità {:?} invece di chiara", detected.mode));
+        }
+        if !detected.source.contains("MacOS-Tahoe") {
+            result = Err(format!("origine inattesa: {}", detected.source));
+        }
+        match detected.native {
+            Some(native) => {
+                let palette = theme::Palette::from_native(&native);
+                let checks = [
+                    ("testo", palette.text, palette.bg),
+                    ("bolla mia", palette.own_text, palette.own_bubble),
+                    ("bolla ricevuta", palette.in_text, palette.in_bubble),
+                ];
+                for (label, fg, bg) in checks {
+                    let ratio = theme::contrast(fg, bg);
+                    if ratio < 7.0 {
+                        result = Err(format!(
+                            "{label} poco contrastato sul tema nativo ({ratio:.1}:1)"
+                        ));
+                    }
+                }
+                if palette.bg.r() != palette.bg.b() || palette.own_bubble.r() != palette.own_bubble.g()
+                {
+                    result = Err("la tavolozza nativa non è monocromatica".to_string());
+                }
+            }
+            None => result = Err("nessun colore nativo usato".to_string()),
+        }
+    }
+
+    // La tavolozza forzata non deve copiare i colori del tema quando la
+    // modalità richiesta non esiste (già controllato sopra con SoloChiaro).
+    match previous_home {
+        Some(value) => std::env::set_var("HOME", value),
+        None => std::env::remove_var("HOME"),
+    }
+    match previous_data {
+        Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+        None => std::env::remove_var("XDG_DATA_HOME"),
+    }
+    match previous_theme {
+        Some(value) => std::env::set_var("WHATS_OPEN_THEME", value),
+        None => std::env::remove_var("WHATS_OPEN_THEME"),
+    }
+    match previous_gtk {
+        Some(value) => std::env::set_var("GTK_THEME", value),
+        None => std::env::remove_var("GTK_THEME"),
+    }
+    match previous_dbus {
+        Some(value) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value),
+        None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
+    }
+    result.map(|_| {
+        "MacOS-Tahoe: gtk.css e gtk-dark.css letti, tavolozza monocromatica con contrasto ≥ 7:1"
+            .to_string()
+    })
 }
 
 /// Nomi, iniziali, numeri e formati brevi: è quello che l'utente vede

@@ -21,6 +21,8 @@ pub struct Config {
     pub camera: String,
     /// Tema: `auto` segue il desktop, altrimenti `dark` o `light`.
     pub theme: String,
+    /// Notifiche di sistema per i messaggi e le chiamate.
+    pub notifications: bool,
 }
 
 impl Default for Config {
@@ -31,6 +33,7 @@ impl Default for Config {
             graceful_exit: true,
             camera: "/dev/video0".to_string(),
             theme: "auto".to_string(),
+            notifications: true,
         }
     }
 }

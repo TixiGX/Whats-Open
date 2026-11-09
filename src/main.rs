@@ -10,6 +10,7 @@ mod engine;
 mod icons;
 mod media;
 mod model;
+mod notify;
 mod platform;
 mod play;
 mod selftest;
@@ -49,8 +50,8 @@ fn main() -> anyhow::Result<()> {
         std::env::set_var("WHATS_OPEN_THEME", value);
     }
     let config = config::Config::load(&paths.data);
-    let (mode, source) = theme::resolve(&config.theme);
-    theme::set(mode, source);
+    let detected = theme::resolve(&config.theme);
+    theme::set(&detected);
 
     if args
         .iter()
@@ -62,6 +63,10 @@ fn main() -> anyhow::Result<()> {
             theme::mode().label(),
             theme::source()
         );
+        if let Some(native) = theme::native() {
+            println!("tema nativo   : {}", native.summary());
+        }
+        println!("tavolozza     : {}", theme::pal().summary());
         return Ok(());
     }
     if args.iter().any(|arg| arg == "--audio-check") {
@@ -69,6 +74,16 @@ fn main() -> anyhow::Result<()> {
             Ok(report) => println!("audio: {report}"),
             Err(error) => {
                 eprintln!("audio: {error}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+    if args.iter().any(|arg| arg == "--notify-check") {
+        match notify::self_test() {
+            Ok(report) => println!("notifiche: {report}"),
+            Err(error) => {
+                eprintln!("notifiche: {error}");
                 std::process::exit(1);
             }
         }
@@ -105,7 +120,7 @@ fn main() -> anyhow::Result<()> {
         Err(message) => {
             eprintln!("{message}");
             log::warn!("{message}");
-            notify(&message);
+            notify_desktop(&message);
             return Ok(());
         }
     };
@@ -164,7 +179,7 @@ fn main() -> anyhow::Result<()> {
             );
             eprintln!("{text}");
             log::error!("{text}");
-            notify("Whats-Open non riesce ad aprire la finestra. Esegui: whats-open --doctor");
+            notify_desktop("Whats-Open non riesce ad aprire la finestra. Esegui: whats-open --doctor");
             Err(anyhow::anyhow!("{error}"))
         }
     }
@@ -179,6 +194,7 @@ fn print_help() {
          \x20 --doctor, --diagnostica      stampa l'ambiente e le dipendenze trovate\n\
          \x20 --video-check                prova il percorso video delle chiamate\n\
          \x20 --audio-check                prova microfono e casse (o il silenzio di riserva)\n\
+         \x20 --notify-check               manda una notifica di prova al desktop\n\
          \x20 --selftest, --collaudo       prova tutte le funzioni che non richiedono l'account\n\
          \x20 --theme <auto|light|dark>    forza il tema, ignorando quello del desktop\n\
          \x20 --version                    versione\n\
@@ -251,20 +267,14 @@ fn install_panic_hook() {
         );
         previous(info);
         if let Some(location) = info.location() {
-            notify(&format!("Whats-Open: errore interno in {}", location));
+            notify_desktop(&format!("Whats-Open: errore interno in {}", location));
         }
     }));
 }
 
 /// Avviso al desktop, quando c'è un servizio di notifiche.
-fn notify(message: &str) {
-    if !platform::command_exists("notify-send") {
-        return;
-    }
-    let _ = std::process::Command::new("notify-send")
-        .args(["--app-name=Whats-Open", "Whats-Open", message])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+fn notify_desktop(message: &str) {
+    // Notifica D-Bus diretta: nessun processo esterno, e se il desktop non
+    // ha un servizio di notifiche il messaggio resta nel log.
+    crate::notify::send("Whats-Open", message, 2);
 }

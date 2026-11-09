@@ -29,6 +29,11 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - Storico iniziale importato dal telefono
 - File trascinati nella finestra, selettore di sistema o percorso a mano
 - Istanza singola: la seconda copia riporta davanti la finestra già aperta
+- **Tema nativo**: legge i colori del tema GTK in uso (anche "MacOS Tahoe",
+  WhiteSur, Adwaita, Breeze…) e li riporta in scala di grigi, restando
+  monocromatico
+- **Notifiche di sistema** per messaggi e chiamate, con clic che riporta la
+  finestra davanti: D-Bus diretto, nessun `notify-send`, nessun processo extra
 - Log su file (con rotazione) e diagnostica integrata
 
 Non ci sono storie, canali né videochiamate: l'obiettivo è un client leggero,
@@ -143,15 +148,26 @@ whats-open --pair 3933...     # accesso con codice a 8 caratteri
 whats-open --doctor           # ambiente, dipendenze e percorsi
 whats-open --audio-check      # microfono, casse o silenzio di riserva
 whats-open --video-check      # percorso H.264 delle videochiamate
+whats-open --notify-check     # manda una notifica di prova al desktop
 whats-open --selftest         # collaudo di tutte le funzioni senza account
 whats-open --theme chiaro     # forza il tema (auto | chiaro | scuro)
 whats-open --help
 ```
 
-Il tema segue il desktop: si leggono `GTK_THEME`, le preferenze GNOME
-(`color-scheme`/`gtk-theme`), `gtk-3.0|4.0/settings.ini` e `kdeglobals`. La
-tavolozza resta monocromatica — cambia la luminosità, non i colori — e in
-Impostazioni si può forzare chiaro o scuro.
+Il tema segue il desktop **e ne usa i colori**. Si legge il nome del tema
+(`GTK_THEME`, `gsettings`, `gtk-3.0|4.0/settings.ini`, `kdeglobals`), si apre
+il suo `gtk.css` (o `gtk-dark.css`) e si prendono le `@define-color`
+`theme_bg_color`, `theme_base_color`, `theme_fg_color`,
+`theme_selected_bg_color`. Da lì nasce la tavolozza: la luminosità è quella
+del tema — quindi un tema macOS avrà i suoi grigi, Adwaita i suoi — ma le
+tinte restano in scala di grigi, come vuole il progetto. Le bolle inviate
+sono scure su tema chiaro e chiare su tema scuro, con contrasto garantito
+almeno 7:1.
+
+Con `--theme chiaro|scuro` si forza la modalità: se il tema non ha la
+variante corrispondente si usa una delle due tavolozze incorporate, invece di
+mostrare colori sbagliati. `whats-open --doctor` dice quale tema e quali
+colori sono in uso.
 
 Dati locali:
 
@@ -175,9 +191,25 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
   "system_fonts": true,     // font di sistema come riserva (emoji, CJK, arabo)
   "graceful_exit": true,    // chiude la sessione in modo pulito all'uscita
   "camera": "/dev/video0",  // fotocamera per le videochiamate
-  "theme": "auto"           // auto | light | dark
+  "theme": "auto",          // auto | light | dark
+  "notifications": true     // notifiche di sistema per messaggi e chiamate
 }
 ```
+
+### Notifiche di sistema
+
+Le notifiche non passano da `notify-send` né da una libreria esterna: il
+client apre il bus di sessione e chiama `org.freedesktop.Notifications.Notify`
+con un messaggio D-Bus costruito a mano. Il thread delle notifiche resta in
+ascolto: cliccare la notifica riporta davanti la finestra.
+
+- Un messaggio produce una notifica solo se la finestra è in secondo piano o
+  la chat non è quella aperta; al massimo una ogni due secondi per chat.
+- Una chiamata in arrivo usa l'urgenza critica.
+- Si spengono da Impostazioni (o con `"notifications": false`).
+- Se il desktop non ha un servizio di notifiche non succede nulla: nessun
+  errore, nessun processo avviato. `whats-open --notify-check` dice se il
+  servizio c'è e risponde.
 
 ### Collaudo senza account
 
@@ -186,8 +218,9 @@ ciò che non richiede il telefono: percorsi e cache confinati, archivio (11 tipi
 di messaggio, stati che non tornano indietro, modifica/revoca/reazione,
 contenuti "una volta sola", invii appesi e riprova, alias LID, fusione dei
 contatti), traduzione dei protobuf, miniature e video, configurazione, tema
-GTK/KDE, rubrica vCard, nomi e numeri, contrasto delle due tavolozze, canale
-audio e percorso video delle chiamate. Ogni riga è `OK` o `FAIL` e l'uscita è
+GTK/KDE e tema nativo (legge un finto MacOS Tahoe e verifica la tavolozza),
+rubrica vCard, nomi e numeri, contrasto delle due tavolozze, notifiche,
+canale audio e percorso video delle chiamate. Ogni riga è `OK` o `FAIL` e l'uscita è
 1 se qualcosa non torna: è lo stesso controllo che gira nella CI.
 
 ```bash
@@ -199,13 +232,15 @@ OK   estrazione messaggi        testo, foto (una volta), GIF, vocale, documento,
 OK   media                      immagine 640×360 con miniatura 480×270, video 2.0 s 320×180 con fotogramma 320×180 (5 KB)
 OK   configurazione             salvataggio, rilettura e file corrotto
 OK   tema del desktop           gtk-theme-name, gtk-application-prefer-dark-theme, GTK_THEME, kdeglobals
+OK   tema nativo                MacOS-Tahoe: gtk.css e gtk-dark.css letti, tavolozza monocromatica con contrasto ≥ 7:1
 OK   leggibilità                scuro/testo 18.2:1, scuro/fumetto mio 17.7:1, scuro/fumetto ricevuto 15.3:1, chiaro/testo 16.6:1, chiaro/fumetto mio 15.1:1, chiaro/fumetto ricevuto 17.7:1
 OK   rubrica                    2 contatti, FN e N, numeri con + e senza
 OK   nomi e numeri              nomi, iniziali, numeri, gruppi, canali, stati, pesi, durate, id
 OK   canale audio               microfono: Default Audio Device · casse: Default Audio Device · 2 frame da 60 ms pronti
+OK   notifiche di sistema       notifica consegnata al servizio del desktop
 OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati a 320×180
 
-11 controlli superati, 0 falliti su 11
+13 controlli superati, 0 falliti su 13
 ```
 
 ### Variabili d'ambiente

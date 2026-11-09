@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libgl1-mesa-dev libegl1-mesa-dev
+            libgl1-mesa-dev libegl1-mesa-dev dbus
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -312,6 +312,15 @@ jobs:
           else
             echo "== l'app è uscita da sola ==" >> smoke.log
           fi
+          # Quanto costa tenerla aperta: CPU in 4 secondi e memoria residente.
+          cpu_a=$(awk '{print $14 + $15}' "/proc/$app/stat")
+          sleep 4
+          cpu_b=$(awk '{print $14 + $15}' "/proc/$app/stat")
+          rss=$(awk '/VmRSS/ {print $2}' "/proc/$app/status")
+          echo "== risorse: $(( (cpu_b - cpu_a) * 10 )) ms di CPU in 4 s · ${rss} kB di memoria ==" >> smoke.log
+          if [ "${rss:-0}" -gt 524288 ]; then
+            echo "::warning::memoria oltre 512 MB: ${rss} kB"
+          fi
           import -display :99 -window root smoke/shot.png 2> smoke/shot.err
           kill "$app" 2>/dev/null
           sleep 1
@@ -335,6 +344,11 @@ jobs:
             echo "== demo: uscita da sola ==" >> smoke.log
             tail -20 smoke/derr.log >> smoke.log
           fi
+          dcpu_a=$(awk '{print $14 + $15}' "/proc/$demo/stat")
+          sleep 4
+          dcpu_b=$(awk '{print $14 + $15}' "/proc/$demo/stat")
+          drss=$(awk '/VmRSS/ {print $2}' "/proc/$demo/status")
+          echo "== risorse demo: $(( (dcpu_b - dcpu_a) * 10 )) ms di CPU in 4 s · ${drss} kB di memoria ==" >> smoke.log
           import -display :99 -window root smoke/demo.png 2> smoke/demo.err
           kill "$demo" 2>/dev/null
           sleep 1

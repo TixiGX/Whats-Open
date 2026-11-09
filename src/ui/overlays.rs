@@ -1098,8 +1098,8 @@ impl App {
                             {
                                 self.config.theme = value.to_string();
                                 self.config.save(&self.paths.data);
-                                let (mode, source) = crate::theme::resolve(value);
-                                crate::theme::set(mode, source);
+                                let detected = crate::theme::resolve(value);
+                                crate::theme::set(&detected);
                                 crate::theme::apply(&self.ctx, self.config.system_fonts);
                                 self.ctx.request_repaint();
                             }
@@ -1209,6 +1209,22 @@ impl App {
                     {
                         self.config.system_player = system_player;
                         self.config.save(&self.paths.data);
+                    }
+
+                    let mut notifications = self.config.notifications;
+                    if ui
+                        .checkbox(
+                            &mut notifications,
+                            RichText::new("Notifiche di sistema per messaggi e chiamate")
+                                .size(12.0)
+                                .color(pal().text),
+                        )
+                        .on_hover_text("Passa dal servizio di notifiche del desktop, senza processi esterni")
+                        .changed()
+                    {
+                        self.config.notifications = notifications;
+                        self.config.save(&self.paths.data);
+                        crate::notify::set_enabled(notifications);
                     }
 
                     ui.add_space(4.0);
