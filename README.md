@@ -112,7 +112,7 @@ include né GTK, né Qt, né WebKit.
 | `libasound` (ALSA) | altoparlanti e microfono (già dentro il binario musl) | messaggi vocali e audio non suonano |
 | `ffmpeg`/`ffprobe` | decodifica audio/video, anteprime | apre i media col player di sistema |
 | `xdg-desktop-portal` + `zenity` | finestra "allega file" | si può indicare il percorso a mano |
-| `notify-send` | avvisi di sistema | nessun avviso, il resto funziona |
+| servizio di notifiche (`org.freedesktop.Notifications`) | avvisi di sistema | nessun avviso, il resto funziona |
 | `xdg-open`, `gio`, `kde-open` | apertura documenti | usa il percorso in cache |
 
 Installazione delle dipendenze per famiglia di distribuzioni:

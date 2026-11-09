@@ -319,7 +319,7 @@ jobs:
           # Il tema nativo deve essere letto dal binario vero, non solo dal
           # collaudo interno: qui c'è un gtk.css con i colori di MacOS Tahoe.
           if grep -q "MacOS-Tahoe" smoke/doctor-tema.log; then
-            echo "tema nativo letto dal binario: sì"
+            echo "tema nativo letto dal binario: sì" | tee -a smoke.log
           else
             echo "::error::il binario non ha letto il tema GTK MacOS-Tahoe"
           fi

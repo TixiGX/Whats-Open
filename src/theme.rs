@@ -585,7 +585,7 @@ fn desktop() -> Desktop {
             if let Some(name) = name {
                 return Desktop {
                     name: Some(name.clone()),
-                    source: format!("GNOME: {name}"),
+                    source: "gsettings".to_string(),
                     hint: hint_from_scheme,
                     kde: None,
                 };
@@ -596,7 +596,7 @@ fn desktop() -> Desktop {
         if let Some(name) = name {
             return Desktop {
                 name: Some(name.clone()),
-                source: format!("tema GTK {name} (settings.ini)"),
+                source: "settings.ini".to_string(),
                 hint: hint.or(hint_from_scheme),
                 kde: None,
             };
@@ -611,7 +611,7 @@ fn desktop() -> Desktop {
             if let Some(name) = name {
                 return Desktop {
                     name: Some(name.clone()),
-                    source: format!("GNOME: {name}"),
+                    source: "gsettings".to_string(),
                     hint: hint_from_scheme,
                     kde: None,
                 };

@@ -131,14 +131,14 @@ pub fn report(paths: &crate::util::Paths) -> String {
 
     let has_ffmpeg = command_exists("ffmpeg");
     let has_xdg_open = command_exists("xdg-open");
-    let has_notify = command_exists("notify-send");
+    let has_notify = session_bus_present();
     let has_portal = portal_present();
     for (label, found) in [
         ("ffmpeg", has_ffmpeg),
         ("ffprobe", command_exists("ffprobe")),
         ("xdg-open", has_xdg_open),
         ("ffplay", command_exists("ffplay")),
-        ("notify-send", has_notify),
+        ("notifiche", has_notify),
         ("portale", has_portal),
     ] {
         out.push_str(&format!("{:<14}: {}\n", label, if found { "sì" } else { "no" }));
@@ -180,16 +180,7 @@ pub fn report(paths: &crate::util::Paths) -> String {
         ));
     }
     if !has_notify {
-        advice.push(format!(
-            "notify-send — avvisi di sistema: {}",
-            install_hint(
-                "libnotify-bin",
-                "libnotify",
-                "libnotify",
-                "libnotify-tools",
-                "libnotify"
-            )
-        ));
+        advice.push("notifiche di sistema — serve una sessione desktop con D-Bus".to_string());
     }
     if !has_portal {
         advice.push(format!(
@@ -252,6 +243,17 @@ fn folders_list(paths: &[PathBuf]) -> String {
         .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
         .collect();
     names.join(", ")
+}
+
+/// Vero se c'è un bus di sessione raggiungibile: è tutto ciò che serve alle
+/// notifiche (il servizio vero e proprio può anche non esserci).
+pub fn session_bus_present() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return true;
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(|runtime| std::path::Path::new(&runtime).join("bus").exists())
+        .unwrap_or(false)
 }
 
 fn default_audio_device() -> Option<String> {
