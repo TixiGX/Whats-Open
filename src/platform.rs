@@ -420,14 +420,18 @@ const FALLBACK_FILES: [&str; 18] = [
     "FreeSans.ttf",
 ];
 
-/// Legge dal desktop quale famiglia usa per l'interfaccia. Nessun processo:
-/// solo `settings.ini` di GTK e `kdeglobals`, come per il tema.
+/// Legge dal desktop quale famiglia usa per l'interfaccia. Nessun processo
+/// avviato a mano: `settings.ini` di GTK e `kdeglobals`; su GNOME, dove il
+/// carattere sta in dconf, una sola domanda a `gsettings` all'avvio.
 pub fn desktop_font_family() -> Option<String> {
     if let Ok(value) = std::env::var("WHATS_OPEN_FONT") {
         let value = family_of(&value);
         if !value.is_empty() {
             return Some(value);
         }
+    }
+    if let Some(family) = gsettings_font_family() {
+        return Some(family);
     }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     for variant in ["gtk-4.0", "gtk-3.0"] {
@@ -454,6 +458,24 @@ pub fn desktop_font_family() -> Option<String> {
         }
     }
     None
+}
+
+/// Su GNOME il carattere dell'interfaccia vive in dconf: `settings.ini` non
+/// lo contiene. Si chiede una volta sola, e solo se c'è una sessione D-Bus.
+fn gsettings_font_family() -> Option<String> {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        return None;
+    }
+    let output = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "font-name"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let family = family_of(value.trim_matches('\'').trim_matches('"'));
+    (!family.is_empty()).then_some(family)
 }
 
 /// "Cantarell 11", "Noto Sans,10,-1,5,50,0,0,0,0,0" → "Cantarell", "Noto Sans".

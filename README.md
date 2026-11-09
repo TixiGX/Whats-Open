@@ -33,9 +33,9 @@ di sistema, i video da ffmpeg o dal player di sistema.
   WhiteSur, Adwaita, Breeze…) e ne segue il chiaroscuro, tenendo i verdi e i
   grigi di WhatsApp (avatar colorati per contatto, bolle inviate verdi)
 - **Carattere del desktop**: l'interfaccia usa il font che il sistema già
-  impiega per le altre finestre (`gtk-font-name` o `kdeglobals`), con i file
-  di sistema come riserva per emoji e alfabeti non latini: nessun font
-  incorporato da mostrare, nessun download
+  impiega per le altre finestre (`font-name` di GNOME, `gtk-font-name` o
+  `kdeglobals`), con i file di sistema come riserva per emoji e alfabeti non
+  latini: nessun font incorporato da mostrare, nessun download
 - **Notifiche di sistema** per messaggi e chiamate, con clic che riporta la
   finestra davanti: D-Bus diretto, nessun `notify-send`, nessun processo extra
 - Log su file (con rotazione) e diagnostica integrata
@@ -310,8 +310,8 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
    lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
    automaticamente come riserva, insieme al carattere dell'interfaccia.
    **L'interfaccia non somiglia al resto della scrivania**: il carattere si
-   legge da `gtk-font-name` (GTK) o da `kdeglobals` (KDE); con `--doctor` la
-   riga `font interfaccia` dice quale file è stato scelto.
+   legge da `font-name` (GNOME), `gtk-font-name` (GTK) o `kdeglobals` (KDE);
+   con `--doctor` la riga `font interfaccia` dice quale file è stato scelto.
 9. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
    uccide `rustc` per mancanza di RAM. Compila con `cargo build --release -j 2`
    (o `-j 1`), chiudi le altre applicazioni oppure usa gli archivi precompilati.
