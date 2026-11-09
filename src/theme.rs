@@ -1374,35 +1374,32 @@ pub fn install_system_fonts(ctx: &egui::Context) {
         return;
     };
 
-    let mut definitions = egui::FontDefinitions::empty();
-    let mut proportional: Vec<String> = Vec::new();
-    let mut monospace: Vec<String> = Vec::new();
-
-    let name = "sys:interfaccia".to_string();
-    definitions.font_data.insert(
-        name.clone(),
-        std::sync::Arc::new(egui::FontData::from_owned(ui.bytes)),
-    );
-    proportional.push(name.clone());
-    monospace.push(name);
-
-    let mut mono_family = String::new();
+    // I font vanno provati prima di consegnarli a egui: se un file è rotto la
+    // libreria entra in panico al primo fotogramma. Meglio rinunciare a una
+    // riserva che far cadere la finestra.
+    let mut faces: Vec<LoadedFont> = Vec::new();
+    faces.push(LoadedFont {
+        key: "sys:interfaccia".to_string(),
+        file: ui.file.clone(),
+        data: std::sync::Arc::new(egui::FontData::from_owned(ui.bytes)),
+        mono: false,
+        ui: true,
+    });
+    let mono_name = plan
+        .mono
+        .as_ref()
+        .map(|mono| mono.family.clone())
+        .unwrap_or_default();
     if let Some(mono) = plan.mono.clone() {
-        let name = "sys:spaziatura".to_string();
-        definitions.font_data.insert(
-            name.clone(),
-            std::sync::Arc::new(egui::FontData::from_owned(mono.bytes)),
-        );
-        monospace.insert(0, name.clone());
-        // Anche i testi normali possono contenere cifre o simboli che nel
-        // font dell'interfaccia mancano: il monospace è una buona seconda.
-        proportional.push(name);
-        mono_family = mono.family;
+        faces.push(LoadedFont {
+            key: "sys:spaziatura".to_string(),
+            file: mono.file.clone(),
+            data: std::sync::Arc::new(egui::FontData::from_owned(mono.bytes)),
+            mono: true,
+            ui: false,
+        });
     }
-
-    let mut fallbacks = 0usize;
     for (index, face) in plan.fallback.into_iter().enumerate() {
-        let name = format!("sys:riserva{index}");
         let mut data = egui::FontData::from_owned(face.bytes);
         // Le emoji di Noto sono disegnate grandi: senza questa correzione
         // sbilanciano la riga rispetto al testo.
@@ -1412,14 +1409,59 @@ pub fn install_system_fonts(ctx: &egui::Context) {
                 ..Default::default()
             });
         }
-        definitions
-            .font_data
-            .insert(name.clone(), std::sync::Arc::new(data));
-        proportional.push(name.clone());
-        monospace.push(name);
-        fallbacks += 1;
+        faces.push(LoadedFont {
+            key: format!("sys:riserva{index}"),
+            file: face.file,
+            data: std::sync::Arc::new(data),
+            mono: false,
+            ui: false,
+        });
     }
 
+    if !fonts_are_loadable(&faces) {
+        let before = faces.len();
+        let broken: Vec<(String, String)> = faces
+            .iter()
+            .filter(|face| !fonts_are_loadable(std::slice::from_ref(face)))
+            .map(|face| (face.key.clone(), face.file.clone()))
+            .collect();
+        faces.retain(|face| !broken.iter().any(|(key, _)| key == &face.key));
+        let rejected: Vec<String> = broken.into_iter().map(|(_, file)| file).collect();
+        log::warn!(
+            "font non leggibili, scartati: {} (su {before})",
+            rejected.join(", ")
+        );
+    }
+
+    if !faces.iter().any(|face| face.ui) {
+        log::warn!("il carattere dell'interfaccia non è leggibile: restano quelli incorporati");
+        set_builtin_fonts(ctx);
+        return;
+    }
+    let ui_family = ui.family.clone();
+    let ui_file = ui.file.clone();
+    let mono_family = if faces.iter().any(|face| face.mono) {
+        mono_name
+    } else {
+        String::new()
+    };
+    let fallbacks = faces.iter().filter(|face| !face.ui && !face.mono).count();
+
+    let mut definitions = egui::FontDefinitions::empty();
+    let mut proportional: Vec<String> = Vec::new();
+    let mut monospace: Vec<String> = Vec::new();
+    for face in faces {
+        definitions
+            .font_data
+            .insert(face.key.clone(), face.data);
+        if face.mono {
+            // La spaziatura fissa va davanti solo nella famiglia dei
+            // monospazi; nei testi normali è una buona seconda scelta.
+            monospace.push(face.key.clone());
+        }
+        proportional.push(face.key.clone());
+        monospace.push(face.key);
+    }
     definitions
         .families
         .insert(egui::FontFamily::Proportional, proportional);
@@ -1428,9 +1470,7 @@ pub fn install_system_fonts(ctx: &egui::Context) {
         .insert(egui::FontFamily::Monospace, monospace);
     ctx.set_fonts(definitions);
     log::info!(
-        "font di sistema: {} ({}) · spaziatura: {} · {fallbacks} riserve · {} file visti",
-        ui.family,
-        ui.file,
+        "font di sistema: {ui_family} ({ui_file}) · spaziatura: {} · {fallbacks} riserve · {} file visti",
         if mono_family.is_empty() {
             "incorporata"
         } else {
@@ -1440,13 +1480,47 @@ pub fn install_system_fonts(ctx: &egui::Context) {
     );
     if let Ok(mut current) = FONT_INFO.lock() {
         *current = Some(FontInfo {
-            family: ui.family,
-            file: ui.file,
+            family: ui_family,
+            file: ui_file,
             mono: mono_family,
             fallbacks,
             builtin: false,
         });
     }
+}
+
+/// Un font pronto per egui, con il ruolo che avrà nella catena.
+struct LoadedFont {
+    key: String,
+    file: String,
+    data: std::sync::Arc<egui::FontData>,
+    /// Va davanti nella famiglia a spaziatura fissa.
+    mono: bool,
+    /// È il carattere dell'interfaccia.
+    ui: bool,
+}
+
+/// Chiede a epaint di costruire i font *prima* di installarli: se un file non
+/// è leggibile la libreria entra in panico, e qui il panico si ferma.
+fn fonts_are_loadable(faces: &[LoadedFont]) -> bool {
+    let mut definitions = egui::FontDefinitions::empty();
+    let mut names = Vec::new();
+    for face in faces {
+        definitions
+            .font_data
+            .insert(face.key.clone(), face.data.clone());
+        names.push(face.key.clone());
+    }
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        definitions.families.insert(family, names.clone());
+    }
+    let probe = std::panic::AssertUnwindSafe(|| {
+        let _ = egui::epaint::text::Fonts::new(
+            egui::epaint::text::TextOptions::default(),
+            definitions,
+        );
+    });
+    std::panic::catch_unwind(probe).is_ok()
 }
 
 /// I font compilati nel binario: ultima risorsa quando il sistema non ne ha.

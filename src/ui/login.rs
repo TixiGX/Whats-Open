@@ -12,14 +12,16 @@ impl App {
         // In una finestra bassa si stringe tutto: il codice resta grande
         // abbastanza da essere inquadrato e il resto si compatta. Se nemmeno
         // così ci sta, la colonna scorre invece di sparire sotto il bordo.
-        let compact = height < 700.0;
-        let side = if compact { 192.0 } else { 228.0 };
+        // La misura del codice segue l'altezza vera: così il piè di pagina
+        // resta dentro la finestra anche quando è appena sopra il minimo.
+        let compact = height < 760.0;
+        let side = if compact { 190.0 } else { 228.0 };
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(if compact { 10.0 } else { (height * 0.08).max(20.0) });
+                    ui.add_space(if compact { 8.0 } else { (height * 0.08).max(20.0) });
 
                     if self.logo_tex.is_none() {
                         if let Some((image, _, _)) = gfx::logo_image() {
@@ -31,7 +33,7 @@ impl App {
                         }
                     }
                     if let Some(texture) = self.logo_tex.as_ref() {
-                        let logo = if compact { 78.0 } else { 92.0 };
+                        let logo = if compact { 72.0 } else { 92.0 };
                         ui.add(
                             egui::Image::new(egui::load::SizedTexture::new(
                                 texture.id(),
@@ -41,7 +43,7 @@ impl App {
                         );
                     }
 
-                    ui.add_space(if compact { 10.0 } else { 14.0 });
+                    ui.add_space(if compact { 8.0 } else { 14.0 });
                     ui.label(
                         RichText::new("Whats-Open")
                             .size(if compact { 26.0 } else { 30.0 })
@@ -53,7 +55,7 @@ impl App {
                             .size(12.5)
                             .color(pal().muted),
                     );
-                    ui.add_space(if compact { 16.0 } else { 26.0 });
+                    ui.add_space(if compact { 13.0 } else { 26.0 });
 
                     match self.conn {
                         Conn::Starting => {
@@ -71,7 +73,7 @@ impl App {
                         Conn::Connected => {}
                     }
 
-                    ui.add_space(if compact { 14.0 } else { 24.0 });
+                    ui.add_space(if compact { 11.0 } else { 24.0 });
 
                     if self.conn != Conn::Error {
                         // Due pulsanti affiancati, larghi quanto la colonna di
@@ -126,7 +128,7 @@ impl App {
                         });
                     }
 
-                    ui.add_space(if compact { 10.0 } else { 18.0 });
+                    ui.add_space(if compact { 8.0 } else { 18.0 });
                     ui.label(
                         RichText::new("Leggero · nativo · nessuna WebView")
                             .size(11.0)
@@ -138,7 +140,7 @@ impl App {
                             .size(10.5)
                             .color(pal().faint),
                     );
-                    ui.add_space(10.0);
+                    ui.add_space(if compact { 6.0 } else { 10.0 });
                 });
             });
     }
