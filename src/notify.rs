@@ -140,11 +140,46 @@ impl Bus {
             Some(stream) => stream,
             None => open_stream(&default_address())?,
         };
-        Self::handshake(stream)
+        let mut bus = Self::handshake(stream)?;
+        bus.hello().then_some(bus)
     }
 
     fn connect_to(address: &str) -> Option<Self> {
-        Self::handshake(open_stream(address)?)
+        let mut bus = Self::handshake(open_stream(address)?)?;
+        bus.hello().then_some(bus)
+    }
+
+    /// Il bus pretende `Hello` come primissimo messaggio: qualunque altra cosa
+    /// e chiude il collegamento. La risposta (il nostro nome unico `:1.x`)
+    /// viene consumata qui, così non passa per la conferma di una notifica.
+    fn hello(&mut self) -> bool {
+        if self
+            .call(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "Hello",
+                "",
+                Enc::new(),
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        while Instant::now() < deadline {
+            if !self.pump() {
+                return false;
+            }
+            if self.got_reply || self.last_error.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ok = self.got_reply && self.last_error.is_none();
+        self.got_reply = false;
+        self.last_error = None;
+        ok
     }
 
     fn handshake(mut stream: UnixStream) -> Option<Self> {
@@ -197,24 +232,7 @@ impl Bus {
     }
 
     fn notify(&mut self, note: &Note) -> std::io::Result<()> {
-        let mut body = Enc::new();
-        body.string("Whats-Open");
-        body.u32(0);
-        body.string("whats-open");
-        body.string(&note.summary);
-        body.string(&note.body);
-        let actions = ["default", "Apri"];
-        body.string_array(&actions);
-        let mut hints = Enc::new();
-        hints.align(8);
-        hints.string("urgency");
-        hints.variant_byte(if note.urgency == 0 { 0 } else { 1 });
-        hints.align(8);
-        hints.string("desktop-entry");
-        hints.variant_string("whats-open");
-        body.dict(&hints);
-        let timeout = if note.urgency >= 2 { 12_000 } else { 6_000 };
-        body.i32(timeout);
+        let body = notify_body(note);
         self.call(
             "org.freedesktop.Notifications",
             "/org/freedesktop/Notifications",
@@ -438,6 +456,29 @@ impl Enc {
         self.align(8);
         self.buf.extend_from_slice(&entries.buf);
     }
+}
+
+/// Corpo del metodo `Notify`: `susssasa{sv}i`.
+fn notify_body(note: &Note) -> Enc {
+    let mut body = Enc::new();
+    body.string("Whats-Open");
+    body.u32(0);
+    body.string("whats-open");
+    body.string(&note.summary);
+    body.string(&note.body);
+    let actions = ["default", "Apri"];
+    body.string_array(&actions);
+    let mut hints = Enc::new();
+    hints.align(8);
+    hints.string("urgency");
+    hints.variant_byte(if note.urgency == 0 { 0 } else { 1 });
+    hints.align(8);
+    hints.string("desktop-entry");
+    hints.variant_string("whats-open");
+    body.dict(&hints);
+    let timeout = if note.urgency >= 2 { 12_000 } else { 6_000 };
+    body.i32(timeout);
+    body
 }
 
 fn put_field(fields: &mut Enc, code: u8, signature: &str, value: &str) {
@@ -684,20 +725,12 @@ mod tests {
             Some("/org/freedesktop/Notifications")
         );
 
-        let mut body = Enc::new();
-        body.string("Whats-Open");
-        body.u32(0);
-        body.string("whats-open");
-        body.string("Anna");
-        body.string("Ciao!");
-        body.string_array(&["default", "Apri"]);
-        let mut hints = Enc::new();
-        hints.align(8);
-        hints.string("urgency");
-        hints.variant_byte(1);
-        body.dict(&hints);
-        body.i32(6000);
-
+        let note = Note {
+            summary: "Anna".to_string(),
+            body: "Ciao!".to_string(),
+            urgency: 2,
+        };
+        let body = notify_body(&note);
         let message = build_message(1, 0, 5, &fields_enc, &body);
         assert_eq!(message[0], b'l');
         assert_eq!(message[1], 1);
