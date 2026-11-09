@@ -551,14 +551,21 @@ fn gsettings_theme() -> Option<(Option<String>, Option<Mode>)> {
 fn kde_colors() -> Option<KdeColors> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let text = std::fs::read_to_string(home.join(".config/kdeglobals")).ok()?;
-    let bg = parse_decimal_color(ini_section_value(&text, "Colors:Window", "BackgroundNormal")?)?;
+    let bg = parse_decimal_color(&ini_section_value(
+        &text,
+        "Colors:Window",
+        "BackgroundNormal",
+    )?)?;
     let fg = ini_section_value(&text, "Colors:Window", "ForegroundNormal")
+        .as_deref()
         .and_then(parse_decimal_color)
         .unwrap_or(Color32::from_gray(230));
     let base = ini_section_value(&text, "Colors:View", "BackgroundNormal")
+        .as_deref()
         .and_then(parse_decimal_color)
         .unwrap_or(bg);
     let selected = ini_section_value(&text, "Colors:Selection", "BackgroundNormal")
+        .as_deref()
         .and_then(parse_decimal_color)
         .unwrap_or(fg);
     Some(KdeColors {
