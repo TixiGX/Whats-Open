@@ -132,7 +132,7 @@ impl App {
 
         egui::Frame::new()
             .fill(pal().panel)
-            .inner_margin(egui::Margin::symmetric(12, 8))
+            .inner_margin(egui::Margin::symmetric(14, 9))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if narrow
@@ -147,7 +147,7 @@ impl App {
                         self.reply_label.clear();
                     }
 
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
                     widgets::avatar_tex(
                         ui,
                         rect,
@@ -158,11 +158,11 @@ impl App {
                         chat.online,
                     );
 
-                    ui.add_space(5.0);
+                    ui.add_space(8.0);
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new(&title)
-                                .size(15.0)
+                                .size(16.0)
                                 .strong()
                                 .color(pal().text),
                         );
@@ -189,7 +189,7 @@ impl App {
                         if !subtitle.is_empty() {
                             ui.label(
                                 RichText::new(util::truncate(&subtitle, 58))
-                                    .size(11.0)
+                                    .size(12.0)
                                     .color(if chat.typing {
                                         pal().text
                                     } else {
@@ -383,8 +383,10 @@ impl App {
         } else {
             pal().in_text
         };
+        // Orario e spunte dentro la bolla: sul verde servono un tono chiaro
+        // ma spento, sul grigio basta il testo secondario.
         let muted = if bubble.own && !bare {
-            crate::theme::mix(pal().own_text, pal().own_bubble, 0.44)
+            crate::theme::mix(pal().own_text, pal().own_bubble, 0.58)
         } else {
             pal().muted
         };
@@ -394,19 +396,37 @@ impl App {
             pal().faint
         };
 
+        // L'angolo dal lato del mittente resta quasi squadrato: è la "coda"
+        // del fumetto, come su WhatsApp.
+        let corners = if bare {
+            egui::CornerRadius::same(0)
+        } else if bubble.own {
+            egui::CornerRadius {
+                nw: 10,
+                ne: 10,
+                sw: 10,
+                se: 3,
+            }
+        } else {
+            egui::CornerRadius {
+                nw: 10,
+                ne: 10,
+                sw: 3,
+                se: 10,
+            }
+        };
         let response = egui::Frame::new()
             .fill(fill)
-            // Un filo di bordo: sul tema chiaro il fumetto bianco si stacca
-            // dallo sfondo solo grazie a questo.
+            // Un filo di bordo aiuta i temi in cui bolla e sfondo sono vicini.
             .stroke(if bare {
                 egui::Stroke::NONE
             } else {
-                egui::Stroke::new(1.0, crate::theme::mix(fill, pal().border, 0.55))
+                egui::Stroke::new(1.0, crate::theme::mix(fill, pal().bg, 0.32))
             })
-            .corner_radius(egui::CornerRadius::same(if bare { 0 } else { 14 }))
+            .corner_radius(corners)
             .inner_margin(egui::Margin::symmetric(
-                if bare { 0 } else { 11 },
-                if bare { 2 } else { 8 },
+                if bare { 0 } else { 12 },
+                if bare { 2 } else { 7 },
             ))
             .show(ui, |ui| {
                 match content_width {
@@ -419,8 +439,15 @@ impl App {
                 ui.vertical(|ui| {
 
                     if !bubble.own && self.messages[index].chat_id.ends_with("@g.us") {
+                        // Nei gruppi il nome prende la tinta dell'avatar del
+                        // mittente: si segue il discorso a colpo d'occhio.
                         let name = self.name_of(&bubble.sender);
-                        ui.label(RichText::new(name).size(11.0).color(muted));
+                        let color = if bare {
+                            muted
+                        } else {
+                            crate::theme::sender_color(&bubble.sender)
+                        };
+                        ui.label(RichText::new(name).size(11.5).strong().color(color));
                         ui.add_space(2.0);
                     }
 
@@ -497,7 +524,7 @@ impl App {
                         }
                         ui.label(
                             RichText::new(util::fmt_clock(bubble.ts))
-                                .size(9.5)
+                                .size(10.0)
                                 .color(muted),
                         );
                     });
@@ -601,7 +628,7 @@ impl App {
         match bubble.kind {
             Kind::Text => {
                 if bubble.view_once && !bubble.played {
-                    if self.view_once_tile(ui, index, Kind::Text, text_color, muted) {
+                    if self.view_once_tile(ui, index, Kind::Text, text_color, muted, bubble.own) {
                         self.actions.push(Action::RevealOnce(index));
                     }
                 } else if bubble.view_once && bubble.played && bubble.text.is_empty() {
@@ -629,12 +656,12 @@ impl App {
                         ui.label(RichText::new("sticker animato").size(9.5).color(faint));
                     }
                 } else {
-                    self.missing_media_ui(ui, index, "Sticker", text_color, muted);
+                    self.missing_media_ui(ui, index, "Sticker", text_color, muted, bubble.own);
                 }
             }
             Kind::Image => {
                 if bubble.view_once && !bubble.played {
-                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted, bubble.own) {
                         self.actions.push(Action::RevealOnce(index));
                     }
                 } else if bubble.view_once && bubble.played {
@@ -651,12 +678,12 @@ impl App {
                         self.actions.push(Action::OpenImage(index));
                     }
                 } else {
-                    self.missing_media_ui(ui, index, "Foto", text_color, muted);
+                    self.missing_media_ui(ui, index, "Foto", text_color, muted, bubble.own);
                 }
             }
             Kind::Video | Kind::Gif => {
                 if bubble.view_once && !bubble.played {
-                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                    if self.view_once_tile(ui, index, bubble.kind, text_color, muted, bubble.own) {
                         self.actions.push(Action::RevealOnce(index));
                     }
                 } else if bubble.view_once && bubble.played {
@@ -702,11 +729,11 @@ impl App {
                         self.actions.push(Action::OpenVideo(index));
                     }
                 } else {
-                    self.missing_media_ui(ui, index, "Video", text_color, muted);
+                    self.missing_media_ui(ui, index, "Video", text_color, muted, bubble.own);
                 }
             }
             Kind::Voice | Kind::Audio if bubble.view_once && !bubble.played => {
-                if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                if self.view_once_tile(ui, index, bubble.kind, text_color, muted, bubble.own) {
                     self.actions.push(Action::RevealOnce(index));
                 }
             }
@@ -823,7 +850,7 @@ impl App {
                 );
             }
             _ if bubble.view_once && !bubble.played => {
-                if self.view_once_tile(ui, index, bubble.kind, text_color, muted) {
+                if self.view_once_tile(ui, index, bubble.kind, text_color, muted, bubble.own) {
                     self.actions.push(Action::RevealOnce(index));
                 }
             }
@@ -850,6 +877,7 @@ impl App {
         kind: Kind,
         text_color: Color32,
         muted: Color32,
+        own: bool,
     ) -> bool {
         // Foto e video mostrano la miniatura vera, velata: si capisce cosa
         // c'è senza aprirlo (e senza scaricarlo).
@@ -898,7 +926,7 @@ impl App {
         let tile = ui.available_width().clamp(180.0, 252.0);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(tile, 74.0), Sense::click());
-        let fill = if text_color == pal().own_text {
+        let fill = if own {
             crate::theme::mix(pal().own_bubble, pal().own_text, 0.09)
         } else {
             crate::theme::mix(pal().in_bubble, pal().in_text, 0.08)
@@ -954,11 +982,12 @@ impl App {
         label: &str,
         text_color: Color32,
         muted: Color32,
+        own: bool,
     ) {
         let tile = ui.available_width().clamp(180.0, 252.0);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(tile, 58.0), Sense::click());
-        let fill = if text_color == pal().own_text {
+        let fill = if own {
             crate::theme::mix(pal().own_bubble, pal().own_text, 0.08)
         } else {
             crate::theme::mix(pal().in_bubble, pal().in_text, 0.07)
@@ -1003,7 +1032,7 @@ impl App {
         ui.separator();
         egui::Frame::new()
             .fill(pal().panel)
-            .inner_margin(egui::Margin::symmetric(12, 10))
+            .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 if self.reply.is_some() {
                     egui::Frame::new()
@@ -1043,7 +1072,7 @@ impl App {
                     let mut pick = false;
                     let mut by_path = false;
                     let attach = crate::icons::Icon::Attach
-                        .button(ui, 30.0, pal().muted)
+                        .button(ui, 32.0, pal().muted)
                         .on_hover_text("Allega un file");
                     egui::Popup::menu(&attach).show(|ui| {
                         ui.set_min_width(196.0);
@@ -1071,9 +1100,8 @@ impl App {
                             .frame(
                                 egui::Frame::new()
                                     .fill(pal().surface)
-                                    .stroke(egui::Stroke::new(1.0, pal().border))
-                                    .corner_radius(egui::CornerRadius::same(16))
-                                    .inner_margin(egui::Margin::symmetric(13, 9)),
+                                    .corner_radius(egui::CornerRadius::same(20))
+                                    .inner_margin(egui::Margin::symmetric(15, 10)),
                             ),
                     );
                     self.composer_focus = response.has_focus();
@@ -1083,15 +1111,17 @@ impl App {
                     }
 
                     if self.composer.trim().is_empty() {
+                        // Il cerchio pieno verde è il gesto principale, come
+                        // sul telefono: dita grandi, nessun dubbio.
                         if crate::icons::Icon::Mic
-                            .button(ui, 32.0, pal().text)
+                            .filled_button(ui, 40.0, pal().accent_text, pal().accent)
                             .on_hover_text("Registra un vocale")
                             .clicked()
                         {
                             self.start_recording();
                         }
                     } else if crate::icons::Icon::Send
-                        .filled_button(ui, 34.0, pal().panel, pal().text)
+                        .filled_button(ui, 40.0, pal().accent_text, pal().accent)
                         .on_hover_text("Invia")
                         .clicked()
                     {

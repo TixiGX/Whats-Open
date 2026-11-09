@@ -59,54 +59,64 @@ pub struct Palette {
     pub in_text: Color32,
     pub danger: Color32,
     pub online: Color32,
+    /// Verde di WhatsApp: pastiglie dei non letti e pulsante di invio.
+    pub accent: Color32,
+    pub accent_text: Color32,
 }
 
 impl Palette {
     pub fn dark() -> Self {
         Self {
-            bg: Color32::from_rgb(8, 8, 8),
-            panel: Color32::from_rgb(14, 14, 14),
-            surface: Color32::from_rgb(22, 22, 22),
-            hover: Color32::from_rgb(33, 33, 33),
-            border: Color32::from_rgb(40, 40, 40),
-            text: Color32::from_rgb(244, 244, 244),
-            muted: Color32::from_rgb(152, 152, 152),
-            faint: Color32::from_rgb(104, 104, 104),
+            bg: Color32::from_rgb(11, 20, 26),
+            panel: Color32::from_rgb(17, 27, 33),
+            surface: Color32::from_rgb(32, 44, 51),
+            hover: Color32::from_rgb(42, 57, 66),
+            border: Color32::from_rgb(42, 57, 66),
+            text: Color32::from_rgb(233, 237, 239),
+            muted: Color32::from_rgb(134, 150, 160),
+            faint: Color32::from_rgb(102, 119, 129),
             white: Color32::from_rgb(255, 255, 255),
-            own_bubble: Color32::from_rgb(242, 242, 242),
-            own_text: Color32::from_rgb(10, 10, 10),
-            in_bubble: Color32::from_rgb(26, 26, 26),
-            in_text: Color32::from_rgb(240, 240, 240),
-            danger: Color32::from_rgb(226, 138, 138),
-            online: Color32::from_rgb(220, 220, 220),
+            // Verde WhatsApp: la bolla inviata è verde scuro con testo chiaro,
+            // quella ricevuta è grigio-blu con lo stesso testo.
+            own_bubble: Color32::from_rgb(0, 92, 75),
+            own_text: Color32::from_rgb(233, 237, 239),
+            in_bubble: Color32::from_rgb(32, 44, 51),
+            in_text: Color32::from_rgb(233, 237, 239),
+            danger: Color32::from_rgb(241, 92, 109),
+            online: Color32::from_rgb(37, 211, 102),
+            accent: Color32::from_rgb(0, 168, 132),
+            accent_text: Color32::from_rgb(6, 37, 31),
         }
     }
 
     pub fn light() -> Self {
         Self {
-            bg: Color32::from_rgb(245, 245, 246),
+            // Il beige del desktop di WhatsApp: il bianco delle bolle si
+            // stacca senza bisogno di bordi marcati.
+            bg: Color32::from_rgb(239, 234, 226),
             panel: Color32::from_rgb(255, 255, 255),
-            surface: Color32::from_rgb(239, 239, 241),
-            hover: Color32::from_rgb(231, 231, 234),
-            border: Color32::from_rgb(222, 222, 225),
-            text: Color32::from_rgb(22, 22, 24),
-            muted: Color32::from_rgb(104, 104, 108),
-            faint: Color32::from_rgb(146, 146, 151),
+            surface: Color32::from_rgb(240, 242, 245),
+            hover: Color32::from_rgb(233, 237, 239),
+            border: Color32::from_rgb(209, 215, 219),
+            text: Color32::from_rgb(17, 27, 33),
+            muted: Color32::from_rgb(102, 119, 129),
+            faint: Color32::from_rgb(134, 150, 160),
             white: Color32::from_rgb(255, 255, 255),
-            // Bolle inviate scure su fondo chiaro: l'opposto del tema scuro,
-            // così il contrasto resta alto senza introdurre colore.
-            own_bubble: Color32::from_rgb(30, 30, 32),
-            own_text: Color32::from_rgb(244, 244, 244),
+            own_bubble: Color32::from_rgb(217, 253, 211),
+            own_text: Color32::from_rgb(17, 27, 33),
             in_bubble: Color32::from_rgb(255, 255, 255),
-            in_text: Color32::from_rgb(24, 24, 26),
-            danger: Color32::from_rgb(176, 52, 52),
-            online: Color32::from_rgb(70, 70, 74),
+            in_text: Color32::from_rgb(17, 27, 33),
+            danger: Color32::from_rgb(200, 28, 60),
+            online: Color32::from_rgb(31, 160, 85),
+            accent: Color32::from_rgb(0, 128, 105),
+            accent_text: Color32::from_rgb(255, 255, 255),
         }
     }
 
-    /// Tavolozza costruita sui colori del tema nativo: le tinte vengono
-    /// ridotte a grigi (il progetto resta monocromatico) mantenendo il
-    /// chiaroscuro del tema, poi si garantisce il contrasto del testo.
+    /// Tavolozza costruita sui colori del tema nativo: le superfici sono i
+    /// grigi del tema (stessa luminosità, niente tinte stonate), mentre il
+    /// verde delle bolle e l'accento restano quelli di WhatsApp. Il testo è
+    /// garantito leggibile anche sui temi con poco contrasto.
     pub fn from_native(native: &NativeTheme) -> Self {
         let preset = if native.dark {
             Palette::dark()
@@ -121,7 +131,6 @@ impl Palette {
             base
         };
         let surface = mix(panel, bg, if native.dark { 0.35 } else { 0.25 });
-        let selected_gray = gray_color(native.selected);
         let mut text = gray_color(native.fg);
         if contrast(text, bg) < 7.0 {
             // Tema con testo poco contrastato: meglio leggibile che fedele.
@@ -145,14 +154,11 @@ impl Palette {
         }
         let hover = mix(surface, text, if native.dark { 0.10 } else { 0.07 });
         let border = mix(bg, text, if native.dark { 0.22 } else { 0.14 });
-        // La bolla inviata resta il segno forte della chat: la sua luminosità
-        // arriva dall'accento del tema, ma viene spinta dove il contrasto è
-        // sicuro (scura su tema chiaro, chiara su tema scuro).
-        let (own_bubble, own_text) = if native.dark {
-            (Color32::from_gray(selected_gray.r().clamp(200, 244)), Color32::from_gray(10))
-        } else {
-            (Color32::from_gray(selected_gray.r().clamp(18, 70)), Color32::from_gray(246))
-        };
+        // La bolla inviata resta il segno forte della chat: verde WhatsApp,
+        // nella tonalità giusta per il chiaroscuro del tema (scura su tema
+        // scuro, chiara su tema chiaro). Il resto della tavolozza continua a
+        // venire dai grigi del tema, così l'app non stona sulla scrivania.
+        let (own_bubble, own_text) = (preset.own_bubble, preset.own_text);
         // La bolla ricevuta deve staccarsi dallo sfondo: su molti temi scuri
         // il colore "base" è quasi identico a quello della finestra e la chat
         // diventerebbe piatta. La tinta viene dal testo (già corretto per la
@@ -190,6 +196,8 @@ impl Palette {
             in_text,
             danger: preset.danger,
             online: preset.online,
+            accent: preset.accent,
+            accent_text: preset.accent_text,
         }
     }
 
@@ -784,8 +792,61 @@ fn gray_color(color: Color32) -> Color32 {
     Color32::from_gray(gray(color))
 }
 
+/// Coppie di colori degli avatar (alto, basso): gli stessi toni pieni che
+/// WhatsApp e i contatti del telefono usano al posto della foto. Sono fissi,
+/// non dipendono dal tema: un contatto ha sempre lo stesso colore.
+const AVATAR_PAIRS: [((u8, u8, u8), (u8, u8, u8)); 8] = [
+    ((92, 155, 245), (47, 95, 184)),   // blu
+    ((165, 132, 224), (107, 69, 176)), // viola
+    ((240, 122, 154), (184, 59, 94)),  // rosa
+    ((242, 165, 75), (194, 109, 31)),  // arancio
+    ((77, 201, 176), (31, 135, 116)),  // verde acqua
+    ((123, 196, 123), (61, 130, 69)),  // verde
+    ((232, 208, 90), (176, 141, 31)),  // giallo
+    ((232, 123, 123), (176, 63, 74)),  // rosso
+];
+
+/// Colore (alto, basso) dell'avatar di un contatto: sempre lo stesso per lo
+/// stesso indirizzo, così la lista non cambia faccia a ogni avvio.
+pub fn avatar(id: &str) -> (Color32, Color32) {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in id.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    let ((tr, tg, tb), (br, bg, bb)) = AVATAR_PAIRS[(hash as usize) % AVATAR_PAIRS.len()];
+    (
+        Color32::from_rgb(tr, tg, tb),
+        Color32::from_rgb(br, bg, bb),
+    )
+}
+
+/// Inchiostro delle iniziali: bianco sui toni scuri, quasi nero sui toni
+/// chiari (giallo, verde), dove il bianco non si leggerebbe.
+pub fn avatar_ink(id: &str) -> Color32 {
+    let (top, bottom) = avatar(id);
+    let middle = mix(top, bottom, 0.5);
+    if contrast(Color32::WHITE, middle) >= 3.0 {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(16, 32, 28)
+    }
+}
+
+/// Nome del mittente nei gruppi: la tinta dell'avatar, schiarita quanto basta
+/// per leggersi sulla bolla.
+pub fn sender_color(id: &str) -> Color32 {
+    let (top, _) = avatar(id);
+    let on_dark = mode().is_dark();
+    if on_dark {
+        mix(top, Color32::WHITE, 0.35)
+    } else {
+        mix(top, Color32::BLACK, 0.30)
+    }
+}
+
 /// Luminosità percepita di un colore (0-255): è il ponte fra il tema del
-/// desktop e la tavolozza monocromatica.
+/// desktop e la tavolozza.
 pub fn gray(color: Color32) -> u8 {
     let value = 0.2126 * color.r() as f32 + 0.7152 * color.g() as f32 + 0.0722 * color.b() as f32;
     value.round().clamp(0.0, 255.0) as u8
@@ -1378,10 +1439,37 @@ mod tests {
         let dark = Palette::dark();
         let light = Palette::light();
         assert!(dark.in_text != light.in_text);
-        assert!(light.own_bubble.r() < light.own_text.r());
-        assert!(dark.own_bubble.r() > dark.own_text.r());
+        // La bolla inviata è verde in entrambi i temi, con il testo leggibile:
+        // verde scuro su fondo scuro, verde chiaro su fondo chiaro.
+        assert!(dark.own_bubble.g() > dark.own_bubble.r());
+        assert!(light.own_bubble.g() > light.own_bubble.r());
+        assert!(contrast(dark.own_text, dark.own_bubble) >= 4.5);
+        assert!(contrast(light.own_text, light.own_bubble) >= 4.5);
+        assert!(contrast(dark.accent_text, dark.accent) >= 4.5);
+        assert!(contrast(light.accent_text, light.accent) >= 4.5);
         // Il bianco pieno serve solo sopra le foto.
         assert_eq!(dark.white, light.white);
+    }
+
+    #[test]
+    fn ogni_contatto_ha_sempre_lo_stesso_avatar() {
+        let (first, second) = avatar("393481112222@s.whatsapp.net");
+        assert_eq!(first, avatar("393481112222@s.whatsapp.net").0);
+        assert_eq!(second, avatar("393481112222@s.whatsapp.net").1);
+        // Indirizzi diversi non finiscono tutti sullo stesso colore.
+        let mut seen = std::collections::HashSet::new();
+        for index in 0..12 {
+            let (top, _) = avatar(&format!("3934800000{index:02}@s.whatsapp.net"));
+            seen.insert((top.r(), top.g(), top.b()));
+        }
+        assert!(seen.len() >= 4, "gli avatar si ripetono troppo: {}", seen.len());
+        // Le iniziali restano leggibili su ogni tinta.
+        for index in 0..12 {
+            let id = format!("3934800000{index:02}@s.whatsapp.net");
+            let (top, bottom) = avatar(&id);
+            let ratio = contrast(avatar_ink(&id), mix(top, bottom, 0.5));
+            assert!(ratio >= 3.0, "iniziali poco leggibili ({ratio:.1}:1) su {id}");
+        }
     }
 
     #[test]

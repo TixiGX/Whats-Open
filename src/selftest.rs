@@ -762,7 +762,7 @@ fn check_theme(root: &Path) -> Result<String, String> {
 }
 
 /// Il caso vero: un tema GTK con i suoi colori (MacOS Tahoe), letto dal CSS
-/// e trasformato in una tavolozza monocromatica ma con le sue tinte.
+/// e trasformato in una tavolozza con i suoi grigi e i verdi di WhatsApp.
 fn check_native_theme(root: &Path) -> Result<String, String> {
     let home = root.join("home-nativo");
     let theme_dir = home.join(".themes/MacOS-Tahoe/gtk-3.0");
@@ -874,9 +874,13 @@ fn check_native_theme(root: &Path) -> Result<String, String> {
                         ));
                     }
                 }
-                if palette.bg.r() != palette.bg.b() || palette.own_bubble.r() != palette.own_bubble.g()
-                {
-                    result = Err("la tavolozza nativa non è monocromatica".to_string());
+                // Le superfici restano i grigi del tema (niente tinte
+                // stonate), la bolla inviata è verde come su WhatsApp.
+                if palette.bg.r() != palette.bg.b() || palette.panel.r() != palette.panel.b() {
+                    result = Err("le superfici del tema nativo non sono grigie".to_string());
+                }
+                if palette.own_bubble.g() <= palette.own_bubble.r() {
+                    result = Err("la bolla inviata non è verde".to_string());
                 }
             }
             None => result = Err("nessun colore nativo usato".to_string()),
@@ -906,7 +910,7 @@ fn check_native_theme(root: &Path) -> Result<String, String> {
         None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
     }
     result.map(|_| {
-        "MacOS-Tahoe: gtk.css e gtk-dark.css letti, tavolozza monocromatica con contrasto ≥ 7:1"
+        "MacOS-Tahoe: gtk.css e gtk-dark.css letti, grigi del tema e contrasto ≥ 7:1"
             .to_string()
     })
 }

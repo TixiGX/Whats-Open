@@ -38,7 +38,7 @@ impl App {
             ui.add_space(2.0);
             ui.label(
                 RichText::new("Whats-Open")
-                    .size(15.5)
+                    .size(16.5)
                     .strong()
                     .color(pal().text),
             );
@@ -75,9 +75,8 @@ impl App {
             let width = ui.available_width() - 12.0;
             let frame = egui::Frame::new()
                 .fill(pal().surface)
-                .stroke(egui::Stroke::new(1.0, pal().border))
-                .corner_radius(egui::CornerRadius::same(12))
-                .inner_margin(egui::Margin::symmetric(12, 7));
+                .corner_radius(egui::CornerRadius::same(20))
+                .inner_margin(egui::Margin::symmetric(14, 8));
             frame.show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.horizontal(|ui| {
@@ -111,9 +110,9 @@ impl App {
             });
         });
 
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.separator();
-        ui.add_space(4.0);
+        ui.add_space(2.0);
 
         let query = self.search.trim().to_lowercase();
         let mut chosen: Option<String> = None;
@@ -195,33 +194,27 @@ fn chat_row(
     selected: bool,
     typing: bool,
 ) -> Response {
-    let height = 66.0;
+    let height = 72.0;
     let full = ui.available_width();
     let row = Rect::from_min_size(ui.cursor().min, Vec2::new(full, height));
-    // Margine laterale e angoli tondi: la riga sembra una scheda, non una
-    // fascia da bordo a bordo.
-    let rect = row.shrink2(Vec2::new(8.0, 3.0));
+    // Una scheda con un filo di margine: la riga scelta si illumina per
+    // intero, come nell'elenco del telefono.
+    let rect = row.shrink2(Vec2::new(6.0, 2.0));
     let (_, response) = ui.allocate_exact_size(Vec2::new(full, height), Sense::click());
 
     {
         let painter = ui.painter();
         if selected {
-            painter.rect_filled(rect, egui::CornerRadius::same(12), pal().surface);
-            // Barretta verticale: dice dove siamo senza aggiungere colore.
-            let bar = Rect::from_min_size(
-                Pos2::new(rect.left() + 1.0, rect.center().y - 11.0),
-                Vec2::new(3.0, 22.0),
-            );
-            painter.rect_filled(bar, egui::CornerRadius::same(2), pal().text);
+            painter.rect_filled(rect, egui::CornerRadius::same(10), pal().surface);
         } else if response.hovered() {
-            painter.rect_filled(rect, egui::CornerRadius::same(12), pal().hover);
+            painter.rect_filled(rect, egui::CornerRadius::same(10), pal().hover);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
     }
 
     let avatar_rect = Rect::from_center_size(
         Pos2::new(rect.left() + 33.0, rect.center().y),
-        Vec2::splat(42.0),
+        Vec2::splat(46.0),
     );
     widgets::avatar_tex(
         ui,
@@ -234,17 +227,16 @@ fn chat_row(
     );
 
     let painter = ui.painter();
-    let text_left = rect.left() + 62.0;
-    let name_color = pal().text;
+    let text_left = rect.left() + 66.0;
     // Caratteri che entrano davvero: il pannello è ridimensionabile.
-    let room = (rect.right() - 56.0 - text_left).max(90.0);
-    let title = util::truncate(title, (room / 7.2) as usize);
+    let room = (rect.right() - 62.0 - text_left).max(90.0);
+    let title = util::truncate(title, (room / 7.4) as usize);
     painter.text(
-        Pos2::new(text_left, rect.center().y - 10.5),
+        Pos2::new(text_left, rect.center().y - 11.5),
         Align2::LEFT_CENTER,
         title,
-        FontId::proportional(14.5),
-        name_color,
+        FontId::proportional(15.0),
+        pal().text,
     );
 
     let preview = if typing {
@@ -256,50 +248,60 @@ fn chat_row(
     } else {
         chat.preview.clone()
     };
-    let preview_color = if typing { pal().text } else { pal().muted };
-    let preview = util::truncate(&preview, (room / 5.9) as usize);
+    let preview_color = if typing {
+        pal().accent
+    } else if chat.unread > 0 {
+        pal().text
+    } else {
+        pal().muted
+    };
+    let preview = util::truncate(&preview, (room / 6.0) as usize);
     painter.text(
-        Pos2::new(text_left, rect.center().y + 11.0),
+        Pos2::new(text_left, rect.center().y + 12.5),
         Align2::LEFT_CENTER,
         preview,
-        FontId::proportional(11.8),
+        FontId::proportional(12.5),
         preview_color,
     );
 
     let right = rect.right() - 14.0;
     painter.text(
-        Pos2::new(right, rect.center().y - 11.5),
+        Pos2::new(right, rect.center().y - 12.0),
         Align2::RIGHT_CENTER,
         util::fmt_chat_time(chat.last_ts),
-        FontId::proportional(10.5),
+        FontId::proportional(11.0),
         if chat.unread > 0 {
-            pal().text
+            pal().accent
         } else {
             pal().faint
         },
     );
 
     if chat.unread > 0 {
+        // Pastiglia verde dei non letti: il numero è alto abbastanza da
+        // leggersi anche a colpo d'occhio.
+        let label = if chat.unread > 99 {
+            "99+".to_string()
+        } else {
+            chat.unread.to_string()
+        };
+        let width = (label.len() as f32 * 7.0 + 12.0).max(20.0);
         let badge = Rect::from_center_size(
-            Pos2::new(right - 8.0, rect.center().y + 13.0),
-            Vec2::splat(17.0),
+            Pos2::new(right - width * 0.5, rect.center().y + 13.0),
+            Vec2::new(width, 20.0),
         );
-        painter.circle_filled(badge.center(), 8.5, pal().text);
+        painter.rect_filled(badge, egui::CornerRadius::same(10), pal().accent);
         painter.text(
             badge.center(),
             Align2::CENTER_CENTER,
-            if chat.unread > 99 {
-                "99".to_string()
-            } else {
-                chat.unread.to_string()
-            },
-            FontId::proportional(9.5),
-            pal().panel,
+            label,
+            FontId::proportional(11.0),
+            pal().accent_text,
         );
     } else if chat.pinned {
         painter.circle_filled(
             Pos2::new(right - 4.0, rect.center().y + 13.0),
-            2.2,
+            2.4,
             pal().muted,
         );
     }

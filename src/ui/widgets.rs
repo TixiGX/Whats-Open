@@ -8,7 +8,58 @@ pub fn initials(name: &str, id: &str) -> String {
     crate::util::initials(&crate::util::display_name(name, id))
 }
 
-/// Avatar tondo con iniziali; per i gruppi un simbolo a tre teste.
+/// Disco con sfumatura verticale, disegnato come un'unica mesh: costa una
+/// primitiva per avatar e dà il tono "contatto del telefono" senza immagini.
+fn gradient_circle(painter: &Painter, center: Pos2, radius: f32, top: Color32, bottom: Color32) {
+    use egui::epaint::{Vertex, WHITE_UV};
+    const RINGS: usize = 3;
+    const SEGMENTS: usize = 20;
+    let color_at = |y: f32| {
+        let t = ((y - (center.y - radius)) / (2.0 * radius)).clamp(0.0, 1.0);
+        crate::theme::mix(top, bottom, t)
+    };
+    let mut mesh = egui::Mesh::default();
+    mesh.vertices.push(Vertex {
+        pos: center,
+        uv: WHITE_UV,
+        color: color_at(center.y - radius * 0.35),
+    });
+    for ring in 1..=RINGS {
+        let r = radius * ring as f32 / RINGS as f32;
+        for segment in 0..SEGMENTS {
+            let angle = segment as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let pos = Pos2::new(center.x + angle.cos() * r, center.y + angle.sin() * r);
+            mesh.vertices.push(Vertex {
+                pos,
+                uv: WHITE_UV,
+                color: color_at(pos.y),
+            });
+        }
+    }
+    for segment in 0..SEGMENTS {
+        let next = (segment + 1) % SEGMENTS;
+        mesh.add_triangle(0, 1 + segment as u32, 1 + next as u32);
+    }
+    for ring in 1..RINGS {
+        let inner = 1 + (ring - 1) * SEGMENTS;
+        let outer = 1 + ring * SEGMENTS;
+        for segment in 0..SEGMENTS {
+            let next = (segment + 1) % SEGMENTS;
+            let (a, b, c, d) = (
+                (inner + segment) as u32,
+                (inner + next) as u32,
+                (outer + segment) as u32,
+                (outer + next) as u32,
+            );
+            mesh.add_triangle(a, c, b);
+            mesh.add_triangle(b, c, d);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Avatar tondo con iniziali (o il simbolo del gruppo), colorato come sul
+/// telefono: la stessa persona ha sempre la stessa tinta.
 pub fn avatar(
     painter: &Painter,
     rect: Rect,
@@ -19,47 +70,58 @@ pub fn avatar(
 ) {
     let center = rect.center();
     let radius = rect.width().min(rect.height()) * 0.5;
-    painter.circle_filled(center, radius, pal().surface);
-
     if is_group {
-        let dark = pal().muted;
-        for (dx, dy, r) in [(-0.20f32, -0.08f32, 0.16f32), (0.0, -0.20, 0.18), (0.22, -0.04, 0.16)] {
+        // I gruppi restano neutri: il grigio del tema, con il simbolo a tre
+        // teste, così non si confondono con le persone.
+        let ink = crate::theme::pal().text;
+        let top = crate::theme::mix(crate::theme::pal().surface, ink, 0.22);
+        let bottom = crate::theme::mix(crate::theme::pal().surface, ink, 0.06);
+        gradient_circle(painter, center, radius, top, bottom);
+        let r = radius;
+        for (dx, dy, size) in [
+            (-0.20f32, -0.06f32, 0.15f32),
+            (0.0, -0.18, 0.17),
+            (0.22, -0.02, 0.15),
+        ] {
             painter.circle_filled(
-                Pos2::new(center.x + radius * dx, center.y + radius * dy),
-                radius * r,
-                dark,
+                Pos2::new(center.x + r * dx, center.y + r * dy),
+                r * size,
+                ink,
             );
         }
         painter.add(egui::Shape::line(
             vec![
-                Pos2::new(center.x - radius * 0.46, center.y + radius * 0.36),
-                Pos2::new(center.x - radius * 0.20, center.y + radius * 0.10),
-                Pos2::new(center.x, center.y + radius * 0.30),
-                Pos2::new(center.x + radius * 0.22, center.y + radius * 0.08),
-                Pos2::new(center.x + radius * 0.48, center.y + radius * 0.34),
+                Pos2::new(center.x - r * 0.46, center.y + r * 0.36),
+                Pos2::new(center.x - r * 0.20, center.y + r * 0.12),
+                Pos2::new(center.x, center.y + r * 0.30),
+                Pos2::new(center.x + r * 0.22, center.y + r * 0.10),
+                Pos2::new(center.x + r * 0.48, center.y + r * 0.34),
             ],
-            Stroke::new((radius * 0.10).max(1.0), dark),
+            Stroke::new((r * 0.10).max(1.0), ink),
         ));
     } else {
-        let text = initials(name, id);
-        let size = (radius * 0.78).clamp(9.0, 18.0);
+        let (top, bottom) = crate::theme::avatar(id);
+        gradient_circle(painter, center, radius, top, bottom);
+        let size = (radius * 0.80).clamp(9.0, 21.0);
         painter.text(
             center,
             Align2::CENTER_CENTER,
-            text,
+            initials(name, id),
             FontId::proportional(size),
-            pal().text,
+            crate::theme::avatar_ink(id),
         );
     }
 
     if online {
-        let dot = Pos2::new(rect.right() - radius * 0.22, rect.bottom() - radius * 0.22);
-        painter.circle_filled(dot, (radius * 0.24).max(2.5), pal().bg);
-        painter.circle_filled(dot, (radius * 0.18).max(2.0), pal().online);
+        // Puntino di presenza con un anello del colore del pannello, così si
+        // vede anche sopra un avatar chiaro.
+        let dot = Pos2::new(rect.right() - radius * 0.16, rect.bottom() - radius * 0.16);
+        painter.circle_filled(dot, (radius * 0.26).max(3.0), crate::theme::pal().panel);
+        painter.circle_filled(dot, (radius * 0.19).max(2.2), crate::theme::pal().online);
     }
 }
 
-/// Avatar con foto profilo (angoli arrotondati) e fallback sulle iniziali.
+/// Avatar con foto profilo (tondo) e fallback sulle iniziali colorate.
 pub fn avatar_tex(
     ui: &mut Ui,
     rect: Rect,
@@ -71,22 +133,23 @@ pub fn avatar_tex(
 ) {
     match texture {
         Some(texture) => {
-            let radius = (rect.width() * 0.26).clamp(4.0, 16.0) as u8;
             let _ = ui.put(
                 rect,
                 egui::Image::new(egui::load::SizedTexture::new(texture.id(), rect.size()))
-                    .corner_radius(egui::CornerRadius::same(radius))
+                    .corner_radius(egui::CornerRadius::same(
+                        (rect.width() * 0.5).round().clamp(0.0, 255.0) as u8,
+                    ))
                     .sense(egui::Sense::hover()),
             );
             if online {
                 let painter = ui.painter();
                 let radius = rect.width().min(rect.height()) * 0.5;
                 let dot = Pos2::new(
-                    rect.right() - radius * 0.22,
-                    rect.bottom() - radius * 0.22,
+                    rect.right() - radius * 0.16,
+                    rect.bottom() - radius * 0.16,
                 );
-                painter.circle_filled(dot, (radius * 0.24).max(2.5), pal().bg);
-                painter.circle_filled(dot, (radius * 0.18).max(2.0), pal().online);
+                painter.circle_filled(dot, (radius * 0.26).max(3.0), crate::theme::pal().panel);
+                painter.circle_filled(dot, (radius * 0.19).max(2.2), crate::theme::pal().online);
             }
         }
         None => avatar(ui.painter(), rect, name, id, is_group, online),
