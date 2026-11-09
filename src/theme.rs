@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
+use std::time::Duration;
 
 use egui::{Color32, FontFamily, FontId, Stroke, TextStyle};
 
@@ -197,7 +198,7 @@ pub fn hex(color: Color32) -> String {
 }
 
 /// Tema GTK trovato su disco, già letto nei suoi colori principali.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeTheme {
     pub name: String,
     /// Cartella da cui arrivano i colori (`gtk-3.0`, `gtk-4.0`, `kdeglobals`).
@@ -245,6 +246,23 @@ static AUTO: LazyLock<Mutex<Option<Detected>>> = LazyLock::new(|| Mutex::new(Non
 /// Tema nativo in uso, per la diagnostica.
 static CURRENT_NATIVE: LazyLock<Mutex<Option<NativeTheme>>> =
     LazyLock::new(|| Mutex::new(None));
+/// Osservatore del tema: impronta dei file e ultimo controllo di `gsettings`.
+struct Watch {
+    ready: bool,
+    checked: std::time::Instant,
+    stamp: u64,
+    gsettings_at: std::time::Instant,
+    gsettings: Option<u64>,
+}
+static WATCH: LazyLock<Mutex<Watch>> = LazyLock::new(|| {
+    Mutex::new(Watch {
+        ready: false,
+        checked: std::time::Instant::now(),
+        stamp: 0,
+        gsettings_at: std::time::Instant::now(),
+        gsettings: None,
+    })
+});
 
 /// Tavolozza corrente.
 pub fn pal() -> Palette {
@@ -321,6 +339,112 @@ pub fn resolve(preference: &str) -> Detected {
             detected
         }
     }
+}
+
+/// Controlla se il tema del desktop è cambiato e, in quel caso, lo applica.
+///
+/// Costa qualche `stat` al secondo (nessun processo, nessuna lettura dei CSS):
+/// il tema viene riletto per intero solo quando cambia davvero qualcosa.
+/// `gsettings` viene interrogato al massimo ogni 30 s, perché su GNOME il
+/// cambio di tema non tocca alcun file di configurazione.
+/// Restituisce `true` se la tavolozza è cambiata: chi chiama deve ridisegnare.
+pub fn watch(preference: &str) -> bool {
+    let now = std::time::Instant::now();
+    let Ok(mut watch) = WATCH.lock() else {
+        return false;
+    };
+    let stamp = fingerprint();
+    if !watch.ready {
+        watch.ready = true;
+        watch.checked = now;
+        watch.stamp = stamp;
+        watch.gsettings_at = now;
+        return false;
+    }
+    // Un controllo al secondo basta: il tema non cambia certo più in fretta.
+    if now.duration_since(watch.checked) < Duration::from_secs(1) {
+        return false;
+    }
+    watch.checked = now;
+    let mut changed = stamp != watch.stamp;
+    watch.stamp = stamp;
+    if now.duration_since(watch.gsettings_at) >= Duration::from_secs(30) {
+        watch.gsettings_at = now;
+        let current = gsettings_theme().map(|(name, hint)| {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut hasher);
+            format!("{hint:?}").hash(&mut hasher);
+            hasher.finish()
+        });
+        if let (Some(previous), Some(current)) = (watch.gsettings, current) {
+            if previous != current {
+                changed = true;
+            }
+        }
+        watch.gsettings = current;
+    }
+    if !changed {
+        return false;
+    }
+    drop(watch);
+    refresh(preference)
+}
+
+/// Rilegge il tema e lo applica se è diverso da quello in uso.
+fn refresh(preference: &str) -> bool {
+    if let Ok(mut cache) = AUTO.lock() {
+        *cache = None;
+    }
+    let detected = resolve(preference);
+    if detected.mode == mode() && detected.source == source() && detected.native == native() {
+        return false;
+    }
+    set(&detected);
+    true
+}
+
+/// Impronta leggera di tutto ciò che può cambiare i colori: variabili
+/// d'ambiente, file di configurazione GTK/KDE e CSS del tema in uso.
+fn fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for key in [
+        "WHATS_OPEN_THEME",
+        "GTK_THEME",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_DATA_HOME",
+        "HOME",
+    ] {
+        std::env::var_os(key).hash(&mut hasher);
+    }
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for folder in ["gtk-3.0", "gtk-4.0"] {
+            for file in ["settings.ini", "gtk.css", "gtk-dark.css"] {
+                paths.push(home.join(".config").join(folder).join(file));
+            }
+        }
+        paths.push(home.join(".config/kdeglobals"));
+    }
+    // I file del tema in uso: se il pacchetto viene aggiornato i colori cambiano.
+    if let Some(native) = native() {
+        if let Some(root) = theme_root(&native.name) {
+            for folder in ["gtk-3.0", "gtk-4.0"] {
+                for file in ["gtk.css", "gtk-dark.css"] {
+                    paths.push(root.join(folder).join(file));
+                }
+            }
+        }
+    }
+    for path in paths {
+        path.hash(&mut hasher);
+        match std::fs::metadata(&path) {
+            Ok(meta) => (meta.len(), meta.modified().ok()).hash(&mut hasher),
+            Err(_) => 0u8.hash(&mut hasher),
+        }
+    }
+    hasher.finish()
 }
 
 /// Tema della distribuzione, in ordine di autorevolezza.
@@ -1226,6 +1350,16 @@ mod tests {
         assert_eq!(resolve("dark").mode, Mode::Dark);
         assert_eq!(resolve("chiaro").mode, Mode::Light);
         assert_eq!(resolve("light").mode, Mode::Light);
+    }
+
+    #[test]
+    fn l_osservatore_e_leggero_e_non_cambia_nulla_da_solo() {
+        // La prima chiamata registra l'impronta e non tocca la tavolozza;
+        // le successive, ravvicinate, non fanno alcun lavoro.
+        assert!(!watch("auto"));
+        let before = pal();
+        assert!(!watch("auto"));
+        assert_eq!(pal().bg, before.bg);
     }
 
     #[test]

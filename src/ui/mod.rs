@@ -1558,6 +1558,14 @@ impl App {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        // Tema del desktop: può cambiare mentre l'app è aperta (chiaro/scuro,
+        // tema diverso, pacchetto aggiornato). Il controllo costa qualche
+        // `stat` al secondo e rilegge i CSS solo quando serve davvero.
+        if crate::theme::watch(&self.config.theme) {
+            crate::theme::apply(ctx, self.config.system_fonts);
+            ctx.request_repaint();
+        }
+
         // Presenza "sta scrivendo" scaduta.
         let now = Instant::now();
         let mut expired = Vec::new();
@@ -1656,6 +1664,11 @@ impl App {
             }
         }
         let _ = video_frame;
+
+        // Un risveglio ogni tre secondi: anche con la finestra ferma il tema
+        // del desktop, i messaggi effimeri e lo stato della connessione
+        // restano aggiornati. Un fotogramma ogni tre secondi non si vede.
+        ctx.request_repaint_after(Duration::from_secs(3));
 
         // File scelti dal selettore.
         if let Some(rx) = self.attach_rx.take() {
