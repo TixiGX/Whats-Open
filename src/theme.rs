@@ -1606,6 +1606,8 @@ mod tests {
         assert!(contrast(palette.text, palette.bg) >= 7.0);
         assert!(contrast(palette.own_text, palette.own_bubble) >= 7.0);
         assert!(contrast(palette.in_text, palette.in_bubble) >= 7.0);
-        assert!(palette.own_bubble.r() < palette.own_text.r());
+        // Sul tema chiaro la bolla inviata è verde chiaro con testo scuro.
+        assert!(palette.own_bubble.g() > palette.own_bubble.r());
+        assert!(palette.own_bubble.r() > palette.own_text.r());
     }
 }
