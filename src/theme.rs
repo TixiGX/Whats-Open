@@ -326,6 +326,14 @@ pub fn set(detected: &Detected) {
     }
 }
 
+/// Dimentica il tema automatico già letto: il prossimo [`resolve`] torna a
+/// guardare il desktop. Serve quando l'utente ripassa ad "automatico".
+pub fn forget() {
+    if let Ok(mut cache) = AUTO.lock() {
+        *cache = None;
+    }
+}
+
 /// Traduce la preferenza dell'utente (`auto`, `dark`, `light`) in un tema.
 pub fn resolve(preference: &str) -> Detected {
     match preference.trim().to_ascii_lowercase().as_str() {

@@ -165,16 +165,21 @@ impl App {
                 .color(pal().faint),
         );
         ui.add_space(10.0);
-        ui.label(
-            RichText::new(
-                "L'app si presenta come WhatsApp Web (Linux). Se il telefono \
-                 dice «Impossibile collegare il dispositivo», aggiorna WhatsApp, \
-                 libera uno dei dispositivi collegati e riprova: il codice in \
-                 schermo deve essere inquadrato subito.",
-            )
-            .size(11.0)
-            .color(pal().muted),
-        );
+        // Una riga lunga quanto tutta la finestra è difficile da leggere:
+        // il testo si tiene entro una colonna stretta, come il resto.
+        ui.scope(|ui| {
+            ui.set_max_width(470.0);
+            ui.label(
+                RichText::new(
+                    "L'app si presenta come WhatsApp Web (Linux). Se il telefono \
+                     dice «Impossibile collegare il dispositivo», aggiorna WhatsApp, \
+                     libera uno dei dispositivi collegati e riprova: il codice in \
+                     schermo deve essere inquadrato subito.",
+                )
+                .size(11.0)
+                .color(pal().muted),
+            );
+        });
     }
 
     fn pair_card(&mut self, ui: &mut egui::Ui) {

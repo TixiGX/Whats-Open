@@ -1098,6 +1098,9 @@ impl App {
                             {
                                 self.config.theme = value.to_string();
                                 self.config.save(&self.paths.data);
+                                // "Automatico" deve rileggere il desktop, non
+                                // riusare la scelta fatta all'avvio.
+                                crate::theme::forget();
                                 let detected = crate::theme::resolve(value);
                                 crate::theme::set(&detected);
                                 crate::theme::apply(&self.ctx, self.config.system_fonts);

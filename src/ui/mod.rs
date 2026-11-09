@@ -338,8 +338,12 @@ impl App {
         self.qr_tex = None;
         self.reconnecting = false;
 
+        // Il motore può emettere raffiche di eventi (ricevute, typing,
+        // presenza): una richiesta di ridisegno immediata per ognuno
+        // accenderebbe la GPU decine di volte al secondo. Accodando il
+        // risveglio si resta sotto i 30 fotogrammi al secondo.
         let ctx = self.ctx.clone();
-        let wake = move || ctx.request_repaint();
+        let wake = move || ctx.request_repaint_after(Duration::from_millis(33));
         self.engine = Some(Engine::start(
             self.paths.clone(),
             pair,
