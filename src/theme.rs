@@ -792,6 +792,13 @@ fn gray_color(color: Color32) -> Color32 {
     Color32::from_gray(gray(color))
 }
 
+/// Fondo della riga scelta nella lista: un velo del verde di WhatsApp sul
+/// pannello, abbastanza da leggersi ma senza diventare una fascia colorata.
+pub fn selected_row() -> Color32 {
+    // Un filo più deciso su tema scuro, dove il verde si perde nel fondo.
+    mix(pal().panel, pal().accent, if mode().is_dark() { 0.34 } else { 0.14 })
+}
+
 /// Coppie di colori degli avatar (alto, basso): gli stessi toni pieni che
 /// WhatsApp e i contatti del telefono usano al posto della foto. Sono fissi,
 /// non dipendono dal tema: un contatto ha sempre lo stesso colore.

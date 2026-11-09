@@ -205,7 +205,7 @@ fn chat_row(
     {
         let painter = ui.painter();
         if selected {
-            painter.rect_filled(rect, egui::CornerRadius::same(10), pal().surface);
+            painter.rect_filled(rect, egui::CornerRadius::same(10), crate::theme::selected_row());
         } else if response.hovered() {
             painter.rect_filled(rect, egui::CornerRadius::same(10), pal().hover);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
