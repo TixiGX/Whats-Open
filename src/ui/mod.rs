@@ -1604,7 +1604,10 @@ impl App {
             ctx.request_repaint_after(Duration::from_millis(160));
         }
         if self.conn == Conn::Qr || self.conn == Conn::PairCode {
-            ctx.request_repaint_after(Duration::from_secs(1));
+            // Il motore sveglia la finestra quando arriva un codice nuovo: qui
+            // basta una rete di sicurezza ogni cinque secondi, così la
+            // schermata di accesso non ridisegna in continuazione.
+            ctx.request_repaint_after(Duration::from_secs(5));
         }
 
         // Registrazione: stop automatico dopo due minuti.
