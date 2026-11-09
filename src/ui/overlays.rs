@@ -1012,18 +1012,21 @@ impl App {
             // su una finestra bassa (560×430) le impostazioni scorrono invece
             // di finire fuori schermo.
             let room = (ctx.content_rect().height() - 150.0).max(180.0);
+            // Anche la larghezza segue la finestra: in 560 px il pannello non
+            // deve sporgere oltre il bordo.
+            let width = (ctx.content_rect().width() - 90.0).clamp(300.0, 430.0);
             egui::Window::new("Impostazioni")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .default_width(430.0)
+                .default_width(width)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .max_height(room)
                         .show(ui, |ui| {
-                            ui.set_width(430.0);
+                            ui.set_width(width);
                             self.settings_body(ui);
                         });
                 });

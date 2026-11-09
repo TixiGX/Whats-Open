@@ -151,21 +151,36 @@ pub fn report(paths: &crate::util::Paths) -> String {
     }
 
     // Quale carattere userà davvero la finestra: è la prima cosa da sapere
-    // quando l'interfaccia "non somiglia" al resto della scrivania.
+    // quando l'interfaccia "non somiglia" al resto della scrivania. Se la
+    // finestra è aperta si riporta ciò che ha davvero caricato, altrimenti
+    // ciò che caricherebbe adesso.
     let plan = font_plan();
+    let loaded = crate::theme::font_info();
     out.push_str(&format!(
         "font interfaccia: {}\n",
-        match plan.ui.as_ref() {
-            Some(face) => format!("{} ({})", face.family, face.file),
-            None => "nessuno: si usano i font incorporati".to_string(),
+        match (loaded.as_ref(), plan.ui.as_ref()) {
+            (Some(info), _) if info.builtin => {
+                "incorporato nel programma (nessun font di sistema)".to_string()
+            }
+            (Some(info), _) => format!("{} ({})", info.family, info.file),
+            (None, Some(face)) => format!("{} ({})", face.family, face.file),
+            (None, None) => "nessuno: si usano i font incorporati".to_string(),
         }
     ));
-    if let Some(mono) = plan.mono.as_ref() {
-        out.push_str(&format!("font spaziatura : {}\n", mono.family));
+    let mono = loaded
+        .as_ref()
+        .map(|info| info.mono.clone())
+        .filter(|mono| !mono.is_empty())
+        .or_else(|| plan.mono.as_ref().map(|mono| mono.family.clone()));
+    if let Some(mono) = mono {
+        out.push_str(&format!("font spaziatura : {mono}\n"));
     }
+    let fallbacks = loaded
+        .as_ref()
+        .map(|info| info.fallbacks)
+        .unwrap_or(plan.fallback.len());
     out.push_str(&format!(
-        "font di riserva  : {} file (su {} visti)\n",
-        plan.fallback.len(),
+        "font di riserva  : {fallbacks} file (su {} visti)\n",
         plan.scanned
     ));
 
@@ -203,7 +218,7 @@ pub fn report(paths: &crate::util::Paths) -> String {
             )
         ));
     }
-    if plan.fallback.is_empty() {
+    if fallbacks == 0 {
         advice.push(format!(
             "font Noto — emoji e scritture non latine: {}",
             install_hint(

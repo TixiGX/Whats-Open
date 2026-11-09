@@ -253,17 +253,6 @@ pub fn chip(ui: &mut Ui, text: &str, selected: bool) -> Response {
     )
 }
 
-/// Scheda con lo sfondo del pannello: raggruppa contenuti affini.
-pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(pal().panel)
-        .stroke(egui::Stroke::new(1.0, pal().border))
-        .corner_radius(egui::CornerRadius::same(14))
-        .inner_margin(egui::Margin::symmetric(16, 14))
-        .show(ui, add)
-        .inner
-}
-
 /// Etichetta di data fra i messaggi.
 pub fn day_separator(ui: &mut Ui, label: &str) {
     ui.add_space(10.0);
