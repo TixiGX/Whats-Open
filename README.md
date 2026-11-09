@@ -39,6 +39,20 @@ di sistema, i video da ffmpeg o dal player di sistema.
 Non ci sono storie, canali né videochiamate: l'obiettivo è un client leggero,
 non una copia di WhatsApp Web.
 
+## Quanto pesa
+
+- **Un binario solo**: 16,2 MB statico (musl) o 15,8 MB (glibc), senza WebView
+  né toolkit grafici al seguito. Il pacchetto completo, con icone, file
+  `.desktop` e installer, è 31 MB.
+- **Fermo**: 20–30 ms di CPU ogni 4 secondi (circa lo 0,5% di un core) e
+  ~120 MB residenti nel collaudo su Xvfb, dove il disegno passa dal
+  rasterizzatore software; con una GPU vera la memoria scende.
+- **Niente ridisegni a vuoto**: la finestra si ridisegna sugli eventi, con un
+  risveglio di sicurezza ogni 3 secondi; le raffiche del motore (ricevute,
+  "sta scrivendo", presenza) vengono accorpate in un solo fotogramma.
+- Il tema nativo si segue con qualche `stat` al secondo: il CSS del tema viene
+  riletto solo quando cambia davvero.
+
 ## Installazione
 
 Ogni release pubblica due archivi già pronti (`whats-open-linux-x86_64-musl` e
