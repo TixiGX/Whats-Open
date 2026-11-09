@@ -1092,10 +1092,14 @@ impl App {
                         self.path_modal = true;
                     }
 
+                    // Il campo prende lo spazio che resta *dopo* il pulsante
+                    // tondo: con `INFINITY` il pulsante finiva fuori finestra.
+                    let room = (ui.available_width() - 40.0 - ui.spacing().item_spacing.x)
+                        .max(120.0);
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut self.composer)
                             .hint_text("Scrivi un messaggio · Invio per inviare")
-                            .desired_width(f32::INFINITY)
+                            .desired_width(room)
                             .desired_rows(1)
                             .frame(
                                 egui::Frame::new()
