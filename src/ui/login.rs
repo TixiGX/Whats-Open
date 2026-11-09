@@ -9,116 +9,139 @@ use super::{gfx, App, Conn};
 impl App {
     pub fn login_ui(&mut self, ui: &mut egui::Ui) {
         let height = ui.available_height();
-        ui.vertical_centered(|ui| {
-            ui.add_space((height * 0.10).max(24.0));
+        // In una finestra bassa si stringe tutto: il codice resta grande
+        // abbastanza da essere inquadrato e il resto si compatta. Se nemmeno
+        // così ci sta, la colonna scorre invece di sparire sotto il bordo.
+        let compact = height < 700.0;
+        let side = if compact { 192.0 } else { 228.0 };
 
-            if self.logo_tex.is_none() {
-                if let Some((image, _, _)) = gfx::logo_image() {
-                    self.logo_tex = Some(ui.ctx().load_texture(
-                        "logo",
-                        image,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                }
-            }
-            if let Some(texture) = self.logo_tex.as_ref() {
-                ui.add(
-                    egui::Image::new(egui::load::SizedTexture::new(
-                        texture.id(),
-                        Vec2::splat(92.0),
-                    ))
-                    .corner_radius(22),
-                );
-            }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(if compact { 10.0 } else { (height * 0.08).max(20.0) });
 
-            ui.add_space(14.0);
-            ui.label(RichText::new("Whats-Open").size(30.0).color(pal().text));
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Un client WhatsApp nativo per Linux")
-                    .size(13.0)
-                    .color(pal().muted),
-            );
-            ui.add_space(26.0);
-
-            match self.conn {
-                Conn::Starting => {
-                    ui.add(egui::Spinner::new().size(26.0).color(pal().text));
-                    ui.add_space(10.0);
-                    ui.label(
-                        RichText::new(&self.status_text)
-                            .size(13.0)
-                            .color(pal().muted),
-                    );
-                }
-                Conn::Qr => self.qr_card(ui),
-                Conn::PairCode => self.pair_card(ui),
-                Conn::Error => self.error_card(ui),
-                Conn::Connected => {}
-            }
-
-            ui.add_space(24.0);
-
-            if self.conn != Conn::Error {
-                // Due pulsanti affiancati, larghi quanto la colonna di testo
-                // (470 px): sotto quella soglia si impilano invece di uscire
-                // dalla finestra.
-                // Lo spazio fra i due pulsanti è quello vero del tema: così la
-                // coppia sta esattamente nella colonna.
-                let gap = ui.spacing().item_spacing.x;
-                let room = ui.available_width().min(470.0);
-                let wide = room >= 300.0;
-                let width = if wide {
-                    (room - gap) * 0.5
-                } else {
-                    room.max(160.0)
-                };
-                ui.scope(|ui| {
-                    ui.set_max_width(room);
-                    if wide {
-                        ui.horizontal(|ui| {
-                            if super::widgets::primary_button(ui, "Collega con numero", width)
-                                .clicked()
-                            {
-                                self.pair_modal = true;
-                            }
-                            if super::widgets::ghost_button(ui, "Ricomincia", width)
-                                .on_hover_text("Rigenera il codice di accesso")
-                                .clicked()
-                            {
-                                self.begin_engine(None);
-                            }
-                        });
-                    } else {
-                        if super::widgets::primary_button(ui, "Collega con numero", width)
-                            .clicked()
-                        {
-                            self.pair_modal = true;
-                        }
-                        ui.add_space(6.0);
-                        if super::widgets::ghost_button(ui, "Ricomincia", width).clicked() {
-                            self.begin_engine(None);
+                    if self.logo_tex.is_none() {
+                        if let Some((image, _, _)) = gfx::logo_image() {
+                            self.logo_tex = Some(ui.ctx().load_texture(
+                                "logo",
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ));
                         }
                     }
-                });
-            }
+                    if let Some(texture) = self.logo_tex.as_ref() {
+                        let logo = if compact { 78.0 } else { 92.0 };
+                        ui.add(
+                            egui::Image::new(egui::load::SizedTexture::new(
+                                texture.id(),
+                                Vec2::splat(logo),
+                            ))
+                            .corner_radius(20),
+                        );
+                    }
 
-            ui.add_space(18.0);
-            ui.label(
-                RichText::new("Leggero · nativo · nessuna WebView")
-                    .size(11.5)
-                    .color(pal().faint),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!("versione {}", env!("CARGO_PKG_VERSION")))
-                    .size(11.0)
-                    .color(pal().faint),
-            );
-        });
+                    ui.add_space(if compact { 10.0 } else { 14.0 });
+                    ui.label(
+                        RichText::new("Whats-Open")
+                            .size(if compact { 26.0 } else { 30.0 })
+                            .color(pal().text),
+                    );
+                    ui.add_space(3.0);
+                    ui.label(
+                        RichText::new("Un client WhatsApp nativo per Linux")
+                            .size(12.5)
+                            .color(pal().muted),
+                    );
+                    ui.add_space(if compact { 16.0 } else { 26.0 });
+
+                    match self.conn {
+                        Conn::Starting => {
+                            ui.add(egui::Spinner::new().size(26.0).color(pal().text));
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new(&self.status_text)
+                                    .size(13.0)
+                                    .color(pal().muted),
+                            );
+                        }
+                        Conn::Qr => self.qr_card(ui, side),
+                        Conn::PairCode => self.pair_card(ui),
+                        Conn::Error => self.error_card(ui),
+                        Conn::Connected => {}
+                    }
+
+                    ui.add_space(if compact { 14.0 } else { 24.0 });
+
+                    if self.conn != Conn::Error {
+                        // Due pulsanti affiancati, larghi quanto la colonna di
+                        // testo (470 px): sotto quella soglia si impilano
+                        // invece di uscire dalla finestra. Lo spazio fra i due
+                        // è quello vero del tema, così la coppia sta esatta.
+                        let gap = ui.spacing().item_spacing.x;
+                        let room = ui.available_width().min(470.0);
+                        let wide = room >= 300.0;
+                        let width = if wide {
+                            (room - gap) * 0.5
+                        } else {
+                            room.max(160.0)
+                        };
+                        ui.scope(|ui| {
+                            ui.set_max_width(room);
+                            if wide {
+                                ui.horizontal(|ui| {
+                                    if super::widgets::primary_button(
+                                        ui,
+                                        "Collega con numero",
+                                        width,
+                                    )
+                                    .clicked()
+                                    {
+                                        self.pair_modal = true;
+                                    }
+                                    if super::widgets::ghost_button(ui, "Ricomincia", width)
+                                        .on_hover_text("Rigenera il codice di accesso")
+                                        .clicked()
+                                    {
+                                        self.begin_engine(None);
+                                    }
+                                });
+                            } else {
+                                if super::widgets::primary_button(
+                                    ui,
+                                    "Collega con numero",
+                                    width,
+                                )
+                                .clicked()
+                                {
+                                    self.pair_modal = true;
+                                }
+                                ui.add_space(6.0);
+                                if super::widgets::ghost_button(ui, "Ricomincia", width).clicked() {
+                                    self.begin_engine(None);
+                                }
+                            }
+                        });
+                    }
+
+                    ui.add_space(if compact { 10.0 } else { 18.0 });
+                    ui.label(
+                        RichText::new("Leggero · nativo · nessuna WebView")
+                            .size(11.0)
+                            .color(pal().faint),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("versione {}", env!("CARGO_PKG_VERSION")))
+                            .size(10.5)
+                            .color(pal().faint),
+                    );
+                    ui.add_space(10.0);
+                });
+            });
     }
 
-    fn qr_card(&mut self, ui: &mut egui::Ui) {
+    fn qr_card(&mut self, ui: &mut egui::Ui, side: f32) {
         if self.qr_tex.is_none() {
             if let Some(image) = gfx::qr_image(&self.qr_code) {
                 self.qr_tex = Some(ui.ctx().load_texture(
@@ -132,8 +155,7 @@ impl App {
         // La scheda si disegna a mano: dentro un layout centrato un Frame
         // prenderebbe tutta la larghezza disponibile e diventerebbe una fascia
         // bianca da bordo a bordo.
-        let side = 228.0;
-        let padding = 14.0;
+        let padding = if side < 220.0 { 12.0 } else { 14.0 };
         let (card, _) = ui.allocate_exact_size(
             Vec2::splat(side + padding * 2.0),
             egui::Sense::hover(),
@@ -171,7 +193,7 @@ impl App {
         // Una riga lunga quanto tutta la finestra è difficile da leggere:
         // il testo si tiene entro una colonna stretta, come il resto.
         ui.scope(|ui| {
-            ui.set_max_width(470.0);
+            ui.set_max_width(470.0_f32.min(ui.available_width()));
             ui.label(
                 RichText::new(
                     "L'app si presenta come WhatsApp Web (Linux). Se il telefono \

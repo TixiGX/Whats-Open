@@ -319,7 +319,14 @@ impl App {
     /// fumetto da due dita e un paragrafo arriva al massimo stabilito.
     fn bubble_width(&mut self, ui: &egui::Ui, index: usize, bubble: &Bubble, max_width: f32) -> Option<f32> {
         if bubble.kind == Kind::Sticker && !bubble.view_once {
-            return None;
+            // Lo sticker non ha fumetto: la riga con l'orario deve restare
+            // larga quanto la figura, non quanto tutta la colonna (altrimenti
+            // l'ora vola dall'altra parte della finestra).
+            let width = match self.thumb_texture(index) {
+                Some(texture) => fit_size(texture.size_vec2(), 150.0, 150.0).x.max(112.0),
+                None => 200.0,
+            };
+            return Some(width);
         }
         let room = (max_width - 22.0).max(80.0);
         let mut width: f32 = 62.0;
@@ -383,15 +390,21 @@ impl App {
         } else {
             pal().in_text
         };
-        // Orario e spunte dentro la bolla: sul verde servono un tono chiaro
-        // ma spento, sul grigio basta il testo secondario.
+        // Orario e spunte dentro la bolla: sul verde servono un tono spento
+        // ma leggibile. Sul verde chiaro del tema diurno la mescolanza deve
+        // essere più contenuta, altrimenti l'ora sbiadisce nel fumetto.
+        let (own_muted, own_faint) = if crate::theme::mode().is_dark() {
+            (0.58, 0.30)
+        } else {
+            (0.44, 0.24)
+        };
         let muted = if bubble.own && !bare {
-            crate::theme::mix(pal().own_text, pal().own_bubble, 0.58)
+            crate::theme::mix(pal().own_text, pal().own_bubble, own_muted)
         } else {
             pal().muted
         };
         let faint = if bubble.own && !bare {
-            crate::theme::mix(pal().own_text, pal().own_bubble, 0.30)
+            crate::theme::mix(pal().own_text, pal().own_bubble, own_faint)
         } else {
             pal().faint
         };

@@ -770,6 +770,12 @@ impl App {
         push("g2", &group, &luca, false, now - 840, Kind::Gif, "GIF", Status::Read, false, 0, None);
         push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua.", Status::Read, false, 0, None);
 
+        // `WHATS_OPEN_DEMO_SETTINGS=1`: apre le impostazioni, così la CI può
+        // fotografarle senza cliccare (nella demo la finestra parte chiusa).
+        if std::env::var_os("WHATS_OPEN_DEMO_SETTINGS").is_some() {
+            self.settings = true;
+        }
+
         // `WHATS_OPEN_DEMO_CALL=video|audio`: mostra il pannello di chiamata
         // nella demo, così lo si può guardare (e fotografare in CI) senza un
         // account vero. Non tocca il motore: è solo la vista.
