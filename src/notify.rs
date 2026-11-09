@@ -755,6 +755,11 @@ mod tests {
     #[test]
     fn un_bus_vero_accetta_la_notifica() {
         if !crate::platform::command_exists("dbus-daemon") {
+            // In CI il pacchetto `dbus` c'è: se manca, il test non deve
+            // sparire in silenzio proprio dove serve.
+            if std::env::var_os("WHATS_OPEN_REQUIRE_DBUS").is_some() {
+                panic!("dbus-daemon assente ma richiesto (WHATS_OPEN_REQUIRE_DBUS)");
+            }
             eprintln!("dbus-daemon assente: test del bus saltato");
             return;
         }

@@ -51,6 +51,9 @@ jobs:
 
       - name: cargo test
         if: success()
+        env:
+          # Il test che parla con un dbus-daemon vero non deve essere saltato.
+          WHATS_OPEN_REQUIRE_DBUS: "1"
         run: |
           set -o pipefail
           cargo test --all-targets 2>&1 | tee test.log
@@ -273,6 +276,19 @@ jobs:
             echo "== --doctor =="
             HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
               XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
+            echo "== --doctor con tema MacOS-Tahoe =="
+            mkdir -p smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0 \
+              smoke/home-tema/.config/gtk-3.0
+            printf '@define-color theme_bg_color #f5f5f5;\n@define-color theme_base_color #ffffff;\n@define-color theme_fg_color #242424;\n@define-color theme_selected_bg_color #0088ff;\n' \
+              > smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0/gtk.css
+            printf '@define-color theme_bg_color #333333;\n@define-color theme_base_color #242424;\n@define-color theme_fg_color #dedede;\n@define-color theme_selected_bg_color #0088ff;\n' \
+              > smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0/gtk-dark.css
+            printf '[Settings]\ngtk-theme-name=MacOS-Tahoe\n' \
+              > smoke/home-tema/.config/gtk-3.0/settings.ini
+            HOME="$PWD/smoke/home-tema" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor \
+              > smoke/doctor-tema.log 2>&1
+            cat smoke/doctor-tema.log
             echo "== --audio-check =="
             printf 'pcm.!default { type null }\nctl.!default { type null }\n' \
               > smoke/alsa-null.conf
@@ -299,6 +315,14 @@ jobs:
             fi
             echo "selftest ok: $selftest_ok"
           } > smoke.log 2>&1
+
+          # Il tema nativo deve essere letto dal binario vero, non solo dal
+          # collaudo interno: qui c'è un gtk.css con i colori di MacOS Tahoe.
+          if grep -q "MacOS-Tahoe" smoke/doctor-tema.log; then
+            echo "tema nativo letto dal binario: sì"
+          else
+            echo "::error::il binario non ha letto il tema GTK MacOS-Tahoe"
+          fi
 
           Xvfb :99 -screen 0 1280x800x24 > xvfb.log 2>&1 &
           sleep 2
