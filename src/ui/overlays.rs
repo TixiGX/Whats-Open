@@ -1232,7 +1232,16 @@ impl App {
 
         // ── dati ────────────────────────────────────────────────────────
         super::widgets::section(ui, "Dati locali");
-        let size = dir_size(&self.paths.cache) + dir_size(&self.paths.data);
+        // Contare i file di una cache piena a ogni fotogramma sarebbe uno
+        // spreco: la misura vale due secondi.
+        let size = match self.usage {
+            Some((at, size)) if at.elapsed() < Duration::from_secs(2) => size,
+            _ => {
+                let size = dir_size(&self.paths.cache) + dir_size(&self.paths.data);
+                self.usage = Some((Instant::now(), size));
+                size
+            }
+        };
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("Occupano {}", util::human_size(size)))
@@ -1244,6 +1253,7 @@ impl App {
                     let _ = std::fs::remove_dir_all(&self.paths.media);
                     let _ = std::fs::create_dir_all(&self.paths.media);
                     self.gfx.clear();
+                    self.usage = None;
                     self.note("Cache svuotata");
                 }
             });

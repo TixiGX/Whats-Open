@@ -183,6 +183,9 @@ pub struct App {
     pub unread_only: bool,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
+    /// Spazio occupato da archivio e cache: si ricalcola al massimo ogni due
+    /// secondi, non a ogni fotogramma.
+    pub usage: Option<(Instant, u64)>,
     pub started: Instant,
 }
 
@@ -295,6 +298,7 @@ impl App {
             unread_only: false,
             last_expiry: Instant::now(),
             scroll_bottom: false,
+            usage: None,
             started: Instant::now(),
         };
         app.sort_chats();
