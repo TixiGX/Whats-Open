@@ -179,6 +179,8 @@ pub struct App {
     pub demo_pool: Vec<Message>,
     /// Finestra stretta: la lista chat e la conversazione non stanno insieme.
     pub narrow: bool,
+    /// Filtro della lista: solo conversazioni con messaggi da leggere.
+    pub unread_only: bool,
     pub last_expiry: Instant,
     pub scroll_bottom: bool,
     pub started: Instant,
@@ -290,6 +292,7 @@ impl App {
             demo: false,
             demo_pool: Vec::new(),
             narrow: false,
+            unread_only: false,
             last_expiry: Instant::now(),
             scroll_bottom: false,
             started: Instant::now(),

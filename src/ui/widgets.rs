@@ -156,6 +156,114 @@ pub fn avatar_tex(
     }
 }
 
+/// Titolo di sezione: minuscolo, maiuscolo solo nell'aspetto tipografico
+/// (il testo resta scritto normalmente per la ricerca e i testi grandi).
+pub fn section(ui: &mut Ui, title: &str) {
+    ui.add_space(12.0);
+    ui.label(
+        RichText::new(title.to_uppercase())
+            .size(10.0)
+            .strong()
+            .color(pal().faint),
+    );
+    ui.add_space(2.0);
+}
+
+/// Riga di impostazione con interruttore a scorrimento.
+pub fn toggle_row(ui: &mut Ui, title: &str, subtitle: &str, value: &mut bool) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).size(12.5).color(pal().text));
+            if !subtitle.is_empty() {
+                ui.label(RichText::new(subtitle).size(10.5).color(pal().muted));
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if switch(ui, value).changed() {
+                changed = true;
+            }
+        });
+    });
+    changed
+}
+
+/// Interruttore: una pastiglia che si accende col verde d'accento. Il pomello
+/// scorre con l'animazione già usata da egui, quindi non costa un timer.
+pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
+    let size = Vec2::new(38.0, 22.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let t = ui.ctx().animate_bool(response.id, *on);
+    let track = crate::theme::mix(pal().border, pal().accent, t);
+    ui.painter()
+        .rect_filled(rect.shrink(1.0), egui::CornerRadius::same(11), track);
+    let x = rect.left() + 12.0 + (rect.width() - 24.0) * t;
+    ui.painter().circle_filled(
+        egui::Pos2::new(x, rect.center().y),
+        8.0,
+        if t > 0.5 { pal().accent_text } else { pal().text },
+    );
+    response
+}
+
+/// Pulsante principale: pieno, verde, alto abbastanza da essere cliccato.
+pub fn primary_button(ui: &mut Ui, text: &str, width: f32) -> Response {
+    ui.add_sized(
+        Vec2::new(width, 36.0),
+        egui::Button::new(RichText::new(text).size(13.0).color(pal().accent_text))
+            .fill(pal().accent)
+            .corner_radius(egui::CornerRadius::same(10)),
+    )
+}
+
+/// Pulsante secondario: superficie del tema, bordo sottile.
+pub fn ghost_button(ui: &mut Ui, text: &str, width: f32) -> Response {
+    ui.add_sized(
+        Vec2::new(width, 36.0),
+        egui::Button::new(RichText::new(text).size(13.0).color(pal().text))
+            .fill(pal().surface)
+            .stroke(egui::Stroke::new(1.0, pal().border))
+            .corner_radius(egui::CornerRadius::same(10)),
+    )
+}
+
+/// Pastiglia di scelta (Automatico / Chiaro / Scuro, Tutte / Non lette).
+pub fn chip(ui: &mut Ui, text: &str, selected: bool) -> Response {
+    let (fill, ink) = if selected {
+        (pal().accent, pal().accent_text)
+    } else {
+        (pal().surface, pal().text)
+    };
+    ui.add(
+        egui::Button::new(RichText::new(text).size(12.0).color(ink))
+            .fill(fill)
+            .stroke(if selected {
+                egui::Stroke::NONE
+            } else {
+                egui::Stroke::new(1.0, pal().border)
+            })
+            .corner_radius(egui::CornerRadius::same(9)),
+    )
+}
+
+/// Scheda con lo sfondo del pannello: raggruppa contenuti affini.
+pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(pal().panel)
+        .stroke(egui::Stroke::new(1.0, pal().border))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(16, 14))
+        .show(ui, add)
+        .inner
+}
+
 /// Etichetta di data fra i messaggi.
 pub fn day_separator(ui: &mut Ui, label: &str) {
     ui.add_space(10.0);

@@ -1008,294 +1008,279 @@ impl App {
     fn settings_ui(&mut self, ctx: &egui::Context) {
         let mut open = self.settings;
         if open {
+            // L'altezza del pannello è quella della finestra meno un margine:
+            // su una finestra bassa (560×430) le impostazioni scorrono invece
+            // di finire fuori schermo.
+            let room = (ctx.content_rect().height() - 150.0).max(180.0);
             egui::Window::new("Impostazioni")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .default_width(380.0)
+                .default_width(430.0)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
-                        let name = self.me_name.clone();
-                        let jid = self.me_jid.clone();
-                        super::widgets::avatar(ui.painter(), rect, &name, &jid, false, true);
-                        ui.add_space(4.0);
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new(if name.is_empty() {
-                                    "Account"
-                                } else {
-                                    name.as_str()
-                                })
-                                .size(14.0)
-                                .color(pal().text),
-                            );
-                            ui.label(
-                                RichText::new(if jid.is_empty() {
-                                    "—".to_string()
-                                } else {
-                                    util::phone_display(&util::jid_user(&jid))
-                                })
-                                .size(11.5)
-                                .color(pal().muted),
-                            );
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .max_height(room)
+                        .show(ui, |ui| {
+                            ui.set_width(430.0);
+                            self.settings_body(ui);
                         });
-                    });
-
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    ui.label(
-                        RichText::new("Archivio")
-                            .size(11.0)
-                            .color(pal().faint),
-                    );
-                    let size = dir_size(&self.paths.cache)
-                        + dir_size(&self.paths.data);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("Dati locali: {}", util::human_size(size)))
-                                .size(12.0)
-                                .color(pal().muted),
-                        );
-                        if ui.small_button("Svuota cache").clicked() {
-                            let _ = std::fs::remove_dir_all(&self.paths.media);
-                            let _ = std::fs::create_dir_all(&self.paths.media);
-                            self.gfx.clear();
-                            self.note("Cache svuotata");
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("Aspetto")
-                            .size(11.0)
-                            .color(pal().faint),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "tema {} · {}",
-                                crate::theme::mode().label(),
-                                crate::theme::source()
-                            ))
-                            .size(12.0)
-                            .color(pal().muted),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        for (value, label) in [
-                            ("auto", "Automatico"),
-                            ("light", "Chiaro"),
-                            ("dark", "Scuro"),
-                        ] {
-                            let selected = self.config.theme == value;
-                            if ui
-                                .selectable_label(selected, RichText::new(label).size(12.0))
-                                .clicked()
-                            {
-                                self.config.theme = value.to_string();
-                                self.config.save(&self.paths.data);
-                                // "Automatico" deve rileggere il desktop, non
-                                // riusare la scelta fatta all'avvio.
-                                crate::theme::forget();
-                                let detected = crate::theme::resolve(value);
-                                crate::theme::set(&detected);
-                                crate::theme::apply(&self.ctx, self.config.system_fonts);
-                                self.ctx.request_repaint();
-                            }
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("Contatti")
-                            .size(11.0)
-                            .color(pal().faint),
-                    );
-                    let named = self
-                        .contacts
-                        .values()
-                        .filter(|contact| !contact.name.trim().is_empty())
-                        .count();
-                    let total = self.chats.iter().filter(|chat| !chat.is_group).count();
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{named} nomi in archivio · {total} chat dirette"
-                            ))
-                            .size(12.0)
-                            .color(pal().muted),
-                        );
-                        if ui
-                            .small_button("Rileggi nomi")
-                            .on_hover_text(
-                                "Recupera i nomi già visti nei messaggi salvati (nessuna rete)",
-                            )
-                            .clicked()
-                        {
-                            let learned = self.refresh_names();
-                            self.note(match learned {
-                                0 => "Nessun nome nuovo nell'archivio".to_string(),
-                                n => format!("{n} nomi recuperati"),
-                            });
-                        }
-                        if ui
-                            .small_button("Importa .vcf")
-                            .on_hover_text(
-                                "Usa la rubrica esportata dal telefono (Impostazioni → Esporta contatti)",
-                            )
-                            .clicked()
-                        {
-                            self.import_vcard();
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("Riproduzione")
-                            .size(11.0)
-                            .color(pal().faint),
-                    );
-                    ui.label(
-                        RichText::new(if media::ffmpeg_available() {
-                            "ffmpeg: disponibile"
-                        } else {
-                            "ffmpeg: non trovato — audio e video si aprono con il player di sistema"
-                        })
-                        .size(12.0)
-                        .color(pal().muted),
-                    );
-
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Fotocamera")
-                                .size(12.0)
-                                .color(pal().muted),
-                        );
-                        let mut camera = self.config.camera.clone();
-                        if ui
-                            .add(
-                                egui::TextEdit::singleline(&mut camera)
-                                    .desired_width(150.0)
-                                    .hint_text("/dev/video0"),
-                            )
-                            .changed()
-                        {
-                            self.config.camera = camera;
-                            self.config.save(&self.paths.data);
-                        }
-                        let present = std::path::Path::new(&self.config.camera).exists();
-                        ui.label(
-                            RichText::new(if present {
-                                "trovata"
-                            } else {
-                                "non trovata: video in sola ricezione"
-                            })
-                            .size(10.5)
-                            .color(if present { pal().muted } else { pal().faint }),
-                        );
-                    });
-
-                    let mut system_player = self.config.system_player;
-                    if ui
-                        .checkbox(
-                            &mut system_player,
-                            RichText::new("Usa il player di sistema per audio e video")
-                                .size(12.0)
-                                .color(pal().text),
-                        )
-                        .changed()
-                    {
-                        self.config.system_player = system_player;
-                        self.config.save(&self.paths.data);
-                    }
-
-                    let mut notifications = self.config.notifications;
-                    if ui
-                        .checkbox(
-                            &mut notifications,
-                            RichText::new("Notifiche di sistema per messaggi e chiamate")
-                                .size(12.0)
-                                .color(pal().text),
-                        )
-                        .on_hover_text("Passa dal servizio di notifiche del desktop, senza processi esterni")
-                        .changed()
-                    {
-                        self.config.notifications = notifications;
-                        self.config.save(&self.paths.data);
-                        crate::notify::set_enabled(notifications);
-                    }
-
-                    ui.add_space(4.0);
-                    let mut system_fonts = self.config.system_fonts;
-                    if ui
-                        .checkbox(
-                            &mut system_fonts,
-                            RichText::new("Font di sistema come riserva (emoji, arabo, CJK)")
-                                .size(12.0)
-                                .color(pal().text),
-                        )
-                        .on_hover_text("Riavvia il caricamento dei font dai percorsi di sistema")
-                        .changed()
-                    {
-                        self.config.system_fonts = system_fonts;
-                        self.config.save(&self.paths.data);
-                        crate::theme::set_system_fonts(&self.ctx, system_fonts);
-                    }
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(RichText::new("Diagnostica").size(12.0))
-                            .on_hover_text("Ambiente, dipendenze e percorsi")
-                            .clicked()
-                        {
-                            self.ctx.copy_text(crate::platform::report(&self.paths));
-                            self.note("Diagnostica copiata negli appunti");
-                        }
-                        if ui
-                            .button(RichText::new("Apri il log").size(12.0))
-                            .clicked()
-                        {
-                            util::open_external(&self.paths.log_file());
-                        }
-                    });
-
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Whats-Open è un client indipendente, non affiliato a WhatsApp LLC.")
-                            .size(10.5)
-                            .color(pal().faint),
-                    );
-                    ui.hyperlink_to(
-                        RichText::new("github.com/TixiGX/Whats-Open")
-                            .size(11.0)
-                            .color(pal().muted),
-                        "https://github.com/TixiGX/Whats-Open",
-                    );
-
-                    ui.add_space(10.0);
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("Esci e scollega").size(12.5),
-                            )
-                            .fill(pal().surface)
-                            .corner_radius(egui::CornerRadius::same(9)),
-                        )
-                        .clicked()
-                    {
-                        self.confirm_logout = true;
-                    }
                 });
         }
         self.settings = open;
+    }
+
+    fn settings_body(&mut self, ui: &mut egui::Ui) {
+        // ── account ──────────────────────────────────────────────────────
+        let name = self.me_name.clone();
+        let jid = self.me_jid.clone();
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(46.0), Sense::hover());
+            super::widgets::avatar(ui.painter(), rect, &name, &jid, false, true);
+            ui.add_space(6.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(if name.is_empty() { "Account" } else { name.as_str() })
+                        .size(15.0)
+                        .strong()
+                        .color(pal().text),
+                );
+                ui.label(
+                    RichText::new(if jid.is_empty() {
+                        "non collegato".to_string()
+                    } else {
+                        util::phone_display(&util::jid_user(&jid))
+                    })
+                    .size(12.0)
+                    .color(pal().muted),
+                );
+            });
+        });
+
+        // ── aspetto ──────────────────────────────────────────────────────
+        super::widgets::section(ui, "Aspetto");
+        ui.label(
+            RichText::new(format!(
+                "Tema {} · {}",
+                crate::theme::mode().label(),
+                crate::theme::source()
+            ))
+            .size(11.5)
+            .color(pal().muted),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            for (value, label) in [
+                ("auto", "Automatico"),
+                ("light", "Chiaro"),
+                ("dark", "Scuro"),
+            ] {
+                let selected = self.config.theme == value;
+                if super::widgets::chip(ui, label, selected).clicked() && !selected {
+                    self.config.theme = value.to_string();
+                    self.config.save(&self.paths.data);
+                    // "Automatico" deve rileggere il desktop, non riusare la
+                    // scelta fatta all'avvio.
+                    crate::theme::forget();
+                    let detected = crate::theme::resolve(value);
+                    crate::theme::set(&detected);
+                    crate::theme::apply(&self.ctx, self.config.system_fonts);
+                    self.ctx.request_repaint();
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        let info = crate::theme::font_info().unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Carattere di sistema").size(12.5).color(pal().text));
+                let detail = if info.builtin {
+                    "incorporato nel programma".to_string()
+                } else if info.family.is_empty() {
+                    "in lettura…".to_string()
+                } else {
+                    format!("{} · dal desktop", info.family)
+                };
+                let hint = if info.file.is_empty() {
+                    format!("{detail}\nnessun file di sistema trovato")
+                } else {
+                    format!(
+                        "{detail}\nfile: {}\nspaziatura: {}\nriserve caricate: {}",
+                        info.file,
+                        if info.mono.is_empty() {
+                            "come l'interfaccia"
+                        } else {
+                            info.mono.as_str()
+                        },
+                        info.fallbacks
+                    )
+                };
+                ui.label(RichText::new(detail).size(10.5).color(pal().muted))
+                    .on_hover_text(hint);
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut system_fonts = self.config.system_fonts;
+                if super::widgets::switch(ui, &mut system_fonts).changed() {
+                    self.config.system_fonts = system_fonts;
+                    self.config.save(&self.paths.data);
+                    crate::theme::set_system_fonts(&self.ctx, system_fonts);
+                    self.ctx.request_repaint();
+                }
+            });
+        });
+
+        // ── contatti ─────────────────────────────────────────────────────
+        super::widgets::section(ui, "Contatti");
+        let named = self
+            .contacts
+            .values()
+            .filter(|contact| !contact.name.trim().is_empty())
+            .count();
+        let total = self.chats.iter().filter(|chat| !chat.is_group).count();
+        ui.label(
+            RichText::new(format!("{named} nomi in archivio · {total} chat dirette"))
+                .size(11.5)
+                .color(pal().muted),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if super::widgets::ghost_button(ui, "Rileggi nomi", 118.0)
+                .on_hover_text("Recupera i nomi già visti nei messaggi salvati (nessuna rete)")
+                .clicked()
+            {
+                let learned = self.refresh_names();
+                self.note(match learned {
+                    0 => "Nessun nome nuovo nell'archivio".to_string(),
+                    n => format!("{n} nomi recuperati"),
+                });
+            }
+            if super::widgets::ghost_button(ui, "Importa .vcf", 118.0)
+                .on_hover_text(
+                    "Usa la rubrica esportata dal telefono (Impostazioni → Esporta contatti)",
+                )
+                .clicked()
+            {
+                self.import_vcard();
+            }
+        });
+
+        // ── media e notifiche ───────────────────────────────────────────
+        super::widgets::section(ui, "Media e notifiche");
+        ui.label(
+            RichText::new(if media::ffmpeg_available() {
+                "ffmpeg disponibile"
+            } else {
+                "ffmpeg non trovato: audio e video si aprono col player di sistema"
+            })
+            .size(11.5)
+            .color(pal().muted),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Fotocamera").size(12.0).color(pal().muted));
+            let mut camera = self.config.camera.clone();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut camera)
+                        .desired_width(160.0)
+                        .hint_text("/dev/video0")
+                        .frame(
+                            egui::Frame::new()
+                                .fill(pal().surface)
+                                .corner_radius(egui::CornerRadius::same(8))
+                                .inner_margin(egui::Margin::symmetric(9, 5)),
+                        ),
+                )
+                .changed()
+            {
+                self.config.camera = camera;
+                self.config.save(&self.paths.data);
+            }
+            let present = std::path::Path::new(&self.config.camera).exists();
+            ui.label(
+                RichText::new(if present { "trovata" } else { "non trovata" })
+                    .size(10.5)
+                    .color(if present { pal().muted } else { pal().faint }),
+            );
+        });
+        ui.add_space(4.0);
+
+        let mut system_player = self.config.system_player;
+        if super::widgets::toggle_row(
+            ui,
+            "Player di sistema",
+            "audio e video con il programma del desktop",
+            &mut system_player,
+        ) {
+            self.config.system_player = system_player;
+            self.config.save(&self.paths.data);
+        }
+
+        let mut notifications = self.config.notifications;
+        if super::widgets::toggle_row(
+            ui,
+            "Notifiche di sistema",
+            "messaggi e chiamate, con il clic che riporta davanti la finestra",
+            &mut notifications,
+        ) {
+            self.config.notifications = notifications;
+            self.config.save(&self.paths.data);
+            crate::notify::set_enabled(notifications);
+        }
+
+        // ── dati ────────────────────────────────────────────────────────
+        super::widgets::section(ui, "Dati locali");
+        let size = dir_size(&self.paths.cache) + dir_size(&self.paths.data);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("Occupano {}", util::human_size(size)))
+                    .size(11.5)
+                    .color(pal().muted),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if super::widgets::ghost_button(ui, "Svuota cache", 104.0).clicked() {
+                    let _ = std::fs::remove_dir_all(&self.paths.media);
+                    let _ = std::fs::create_dir_all(&self.paths.media);
+                    self.gfx.clear();
+                    self.note("Cache svuotata");
+                }
+            });
+        });
+
+        // ── servizio ────────────────────────────────────────────────────
+        super::widgets::section(ui, "Servizio");
+        ui.horizontal(|ui| {
+            if super::widgets::ghost_button(ui, "Diagnostica", 110.0)
+                .on_hover_text("Ambiente, dipendenze e percorsi")
+                .clicked()
+            {
+                self.ctx.copy_text(crate::platform::report(&self.paths));
+                self.note("Diagnostica copiata negli appunti");
+            }
+            if super::widgets::ghost_button(ui, "Apri il log", 110.0).clicked() {
+                util::open_external(&self.paths.log_file());
+            }
+        });
+
+        ui.add_space(12.0);
+        ui.label(
+            RichText::new("Whats-Open è un client indipendente, non affiliato a WhatsApp LLC.")
+                .size(10.0)
+                .color(pal().faint),
+        );
+        ui.hyperlink_to(
+            RichText::new("github.com/TixiGX/Whats-Open")
+                .size(10.5)
+                .color(pal().muted),
+            "https://github.com/TixiGX/Whats-Open",
+        );
+
+        ui.add_space(10.0);
+        if super::widgets::ghost_button(ui, "Esci e scollega", 150.0).clicked() {
+            self.confirm_logout = true;
+        }
     }
 
     fn new_chat_ui(&mut self, ctx: &egui::Context) {

@@ -73,17 +73,18 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
             let width = ui.available_width() - 12.0;
+            let mut focused = false;
             let frame = egui::Frame::new()
                 .fill(pal().surface)
                 .corner_radius(egui::CornerRadius::same(20))
                 .inner_margin(egui::Margin::symmetric(14, 8));
-            frame.show(ui, |ui| {
+            let inner = frame.show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.horizontal(|ui| {
                     crate::icons::Icon::Search.paint(
                         ui,
                         Rect::from_min_size(ui.cursor().min, Vec2::splat(15.0)),
-                        pal().faint,
+                        if focused { pal().text } else { pal().faint },
                     );
                     ui.add_space(19.0);
                     let room = if self.search.is_empty() {
@@ -91,13 +92,14 @@ impl App {
                     } else {
                         (ui.available_width() - 26.0).max(80.0)
                     };
-                    ui.add(
+                    let field = ui.add(
                         egui::TextEdit::singleline(&mut self.search)
                             .hint_text("Cerca chat e contatti")
                             .desired_width(room)
                             .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
                             .text_color(pal().text),
                     );
+                    focused = field.has_focus();
                     if !self.search.is_empty()
                         && crate::icons::Icon::Close
                             .button(ui, 18.0, pal().muted)
@@ -108,9 +110,35 @@ impl App {
                     }
                 });
             });
+            if focused {
+                ui.painter().rect_stroke(
+                    inner.response.rect,
+                    egui::CornerRadius::same(20),
+                    egui::Stroke::new(1.0, pal().accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
         });
 
+        // Filtro come nell'elenco del telefono: tutte, oppure solo quelle con
+        // qualcosa da leggere.
+        let unread_chats = self.chats.iter().filter(|chat| chat.unread > 0).count();
         ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            if widgets::chip(ui, "Tutte", !self.unread_only).clicked() {
+                self.unread_only = false;
+            }
+            let label = if unread_chats > 0 {
+                format!("Non lette · {unread_chats}")
+            } else {
+                "Non lette".to_string()
+            };
+            if widgets::chip(ui, &label, self.unread_only).clicked() {
+                self.unread_only = true;
+            }
+        });
+        ui.add_space(6.0);
         ui.separator();
         ui.add_space(2.0);
 
@@ -125,12 +153,14 @@ impl App {
                 for index in 0..count {
                     let chat = self.chats[index].clone();
                     let title = self.title_for(&chat);
-                    if !query.is_empty() {
-                        if !title.to_lowercase().contains(&query)
-                            && !chat.preview.to_lowercase().contains(&query)
-                        {
-                            continue;
-                        }
+                    if self.unread_only && chat.unread == 0 {
+                        continue;
+                    }
+                    if !query.is_empty()
+                        && !title.to_lowercase().contains(&query)
+                        && !chat.preview.to_lowercase().contains(&query)
+                    {
+                        continue;
                     }
                     shown += 1;
                     let selected = self.selected.as_deref() == Some(chat.id.as_str());
@@ -150,10 +180,12 @@ impl App {
                     ui.add_space(30.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(if query.is_empty() {
-                                "Nessuna conversazione"
-                            } else {
+                            RichText::new(if !query.is_empty() {
                                 "Nessun risultato"
+                            } else if self.unread_only {
+                                "Niente da leggere: sei in pari"
+                            } else {
+                                "Nessuna conversazione"
                             })
                             .size(12.5)
                             .color(pal().faint),

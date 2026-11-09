@@ -60,49 +60,52 @@ impl App {
             ui.add_space(24.0);
 
             if self.conn != Conn::Error {
-                ui.horizontal(|ui| {
-                    let total = 330.0;
-                    let gap = 8.0;
-                    if ui.available_width() > total + gap {
-                        ui.add_space((ui.available_width() - total - gap) * 0.5);
-                    }
-                    let size = Vec2::new((total - gap) * 0.5, 34.0);
-                    if ui
-                        .add_sized(
-                            size,
-                            egui::Button::new(
-                                RichText::new("Collega con numero").size(13.0),
-                            )
-                            .fill(pal().surface)
-                            .stroke(egui::Stroke::new(1.0, pal().border))
-                            .corner_radius(egui::CornerRadius::same(10)),
-                        )
-                        .clicked()
-                    {
-                        self.pair_modal = true;
-                    }
-                    if ui
-                        .add_sized(
-                            size,
-                            egui::Button::new(
-                                RichText::new("Ricomincia").size(13.0),
-                            )
-                            .fill(pal().surface)
-                            .stroke(egui::Stroke::new(1.0, pal().border))
-                            .corner_radius(egui::CornerRadius::same(10)),
-                        )
-                        .on_hover_text("Rigenera il codice di accesso")
-                        .clicked()
-                    {
-                        let pair = None;
-                        self.begin_engine(pair);
+                // Due pulsanti affiancati, larghi quanto la colonna di testo
+                // (470 px): sotto quella soglia si impilano invece di uscire
+                // dalla finestra.
+                // Lo spazio fra i due pulsanti è quello vero del tema: così la
+                // coppia sta esattamente nella colonna.
+                let gap = ui.spacing().item_spacing.x;
+                let room = ui.available_width().min(470.0);
+                let wide = room >= 300.0;
+                let width = if wide {
+                    (room - gap) * 0.5
+                } else {
+                    room.max(160.0)
+                };
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    if wide {
+                        ui.horizontal(|ui| {
+                            if super::widgets::primary_button(ui, "Collega con numero", width)
+                                .clicked()
+                            {
+                                self.pair_modal = true;
+                            }
+                            if super::widgets::ghost_button(ui, "Ricomincia", width)
+                                .on_hover_text("Rigenera il codice di accesso")
+                                .clicked()
+                            {
+                                self.begin_engine(None);
+                            }
+                        });
+                    } else {
+                        if super::widgets::primary_button(ui, "Collega con numero", width)
+                            .clicked()
+                        {
+                            self.pair_modal = true;
+                        }
+                        ui.add_space(6.0);
+                        if super::widgets::ghost_button(ui, "Ricomincia", width).clicked() {
+                            self.begin_engine(None);
+                        }
                     }
                 });
             }
 
             ui.add_space(18.0);
             ui.label(
-                RichText::new("Leggero · nativo · monocromatico · nessuna WebView")
+                RichText::new("Leggero · nativo · nessuna WebView")
                     .size(11.5)
                     .color(pal().faint),
             );

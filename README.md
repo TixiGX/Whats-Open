@@ -1,7 +1,7 @@
 # Whats-Open
 
-Client WhatsApp nativo per Linux: interfaccia minimale in bianco e nero,
-protocollo in puro Rust, nessuna WebView e nessun runtime JavaScript.
+Client WhatsApp nativo per Linux: interfaccia essenziale con i verdi di
+WhatsApp, protocollo in puro Rust, nessuna WebView e nessun runtime JavaScript.
 
 Whats-Open non incorpora WhatsApp Web: parla direttamente con i server usando
 la libreria [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust)
@@ -32,6 +32,10 @@ di sistema, i video da ffmpeg o dal player di sistema.
 - **Tema nativo**: legge i colori del tema GTK in uso (anche "MacOS Tahoe",
   WhiteSur, Adwaita, Breeze…) e ne segue il chiaroscuro, tenendo i verdi e i
   grigi di WhatsApp (avatar colorati per contatto, bolle inviate verdi)
+- **Carattere del desktop**: l'interfaccia usa il font che il sistema già
+  impiega per le altre finestre (`gtk-font-name` o `kdeglobals`), con i file
+  di sistema come riserva per emoji e alfabeti non latini: nessun font
+  incorporato da mostrare, nessun download
 - **Notifiche di sistema** per messaggi e chiamate, con clic che riporta la
   finestra davanti: D-Bus diretto, nessun `notify-send`, nessun processo extra
 - Log su file (con rotazione) e diagnostica integrata
@@ -52,6 +56,9 @@ non una copia di WhatsApp Web.
   "sta scrivendo", presenza) vengono accorpate in un solo fotogramma.
 - Il tema nativo si segue con qualche `stat` al secondo: il CSS del tema viene
   riletto solo quando cambia davvero.
+- I font sono quelli installati nel sistema: il programma non porta con sé un
+  carattere proprio. Se in una macchina non ce n'è nessuno, entra in gioco il
+  carattere di riserva compilato nel binario.
 
 ## Installazione
 
@@ -210,7 +217,7 @@ Il socket di istanza singola vive in `$XDG_RUNTIME_DIR/whats-open.sock`.
 ```json
 {
   "system_player": false,   // true: audio/video col player di sistema
-  "system_fonts": true,     // font di sistema come riserva (emoji, CJK, arabo)
+  "system_fonts": true,     // carattere preso dal desktop, non incorporato
   "graceful_exit": true,    // chiude la sessione in modo pulito all'uscita
   "camera": "/dev/video0",  // fotocamera per le videochiamate
   "theme": "auto",          // auto | light | dark
@@ -269,7 +276,8 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
 
 | Variabile | Effetto |
 |---|---|
-| `WHATS_OPEN_NO_SYSTEM_FONTS=1` | usa solo i font incorporati (equivale a togliere la spunta nelle impostazioni) |
+| `WHATS_OPEN_NO_SYSTEM_FONTS=1` | usa solo il carattere incorporato di riserva (equivale a spegnere l'interruttore nelle impostazioni) |
+| `WHATS_OPEN_FONT="Inter 11"` | forza la famiglia del desktop da usare (utile per provarla) |
 | `WINIT_UNIX_BACKEND=x11` o `wayland` | forza il backend grafico |
 | `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
 | `RUST_LOG=debug` | log più verboso |
@@ -300,7 +308,10 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
    `zenity`, oppure usa **Allega → Da percorso…**.
 8. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
    lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
-   automaticamente come riserva.
+   automaticamente come riserva, insieme al carattere dell'interfaccia.
+   **L'interfaccia non somiglia al resto della scrivania**: il carattere si
+   legge da `gtk-font-name` (GTK) o da `kdeglobals` (KDE); con `--doctor` la
+   riga `font interfaccia` dice quale file è stato scelto.
 9. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
    uccide `rustc` per mancanza di RAM. Compila con `cargo build --release -j 2`
    (o `-j 1`), chiudi le altre applicazioni oppure usa gli archivi precompilati.

@@ -1,13 +1,13 @@
-//! Tema monocromatico che parte dai colori veri del desktop.
+//! Tema che parte dai colori veri del desktop, con i verdi di WhatsApp.
 //!
 //! Il client non disegna con GTK, ma può leggere il tema nativo: si prende il
 //! nome del tema (`GTK_THEME`, `gsettings`, `settings.ini`, `kdeglobals`), si
 //! apre il suo `gtk.css` (o `gtk-dark.css`) e si leggono le `@define-color`
 //! che ogni tema GTK deve dichiarare — sfondo, caselle, testo, selezione.
-//! Da lì nascono le tinte della tavolozza: si tiene la luminosità esatta del
-//! tema e la si porta in scala di grigi, perché l'interfaccia resta
-//! monocromatica come da progetto. Un tema "MacOS Tahoe" darà quindi i suoi
-//! grigi caldi, Adwaita i suoi, Breeze i suoi.
+//! Da lì nascono le tinte della tavolozza: si usano i grigi (chiari o scuri)
+//! del tema per sfondo, pannelli e superfici, mentre le bolle inviate e gli
+//! accenti restano verdi come nell'app del telefono. Un tema "MacOS Tahoe"
+//! darà quindi i suoi grigi caldi, Adwaita i suoi, Breeze i suoi.
 //!
 //! Se il tema non si trova o non è leggibile si torna alle due tavolozze
 //! incorporate: l'app non resta mai senza colori. Nessuna dipendenza in più,
@@ -1285,7 +1285,7 @@ fn color_from_hex(hex: &str) -> Option<Color32> {
     }
 }
 
-fn ini_value(text: &str, key: &str) -> Option<String> {
+pub(crate) fn ini_value(text: &str, key: &str) -> Option<String> {
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.starts_with(';') || line.starts_with('[') {
@@ -1301,7 +1301,7 @@ fn ini_value(text: &str, key: &str) -> Option<String> {
     None
 }
 
-fn ini_section_value(text: &str, section: &str, key: &str) -> Option<String> {
+pub(crate) fn ini_section_value(text: &str, section: &str, key: &str) -> Option<String> {
     let mut inside = false;
     for line in text.lines() {
         let line = line.trim();
@@ -1327,31 +1327,135 @@ fn ini_section_value(text: &str, section: &str, key: &str) -> Option<String> {
 
 // ── font e stile egui ────────────────────────────────────────────────────
 
-/// Aggiunge i font di sistema come riserva: emoji, arabo, ebraico, devanagari,
-/// thai e CJK restano leggibili anche senza font dedicati nel binario.
+/// Il carattere effettivamente in uso, per la diagnostica e le impostazioni.
+#[derive(Clone, Debug, Default)]
+pub struct FontInfo {
+    pub family: String,
+    pub file: String,
+    pub mono: String,
+    pub fallbacks: usize,
+    /// `true` se il sistema non aveva font e sono rimasti quelli incorporati.
+    pub builtin: bool,
+}
+
+static FONT_INFO: Mutex<Option<FontInfo>> = Mutex::new(None);
+
+pub fn font_info() -> Option<FontInfo> {
+    FONT_INFO
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// Sceglie il carattere dell'interfaccia **dal sistema**.
+///
+/// La famiglia arriva da `gtk-font-name` / `kdeglobals` e si cerca il file
+/// corrispondente nelle cartelle dei font; se il desktop non dice nulla si
+/// prova con le famiglie più comuni. I font incorporati nel binario restano
+/// solo come ultima risorsa, quando nella macchina non c'è nessun font.
 pub fn install_system_fonts(ctx: &egui::Context) {
     if std::env::var_os("WHATS_OPEN_NO_SYSTEM_FONTS").is_some() {
+        set_builtin_fonts(ctx);
         return;
     }
-    let fonts = crate::platform::load_system_fonts();
-    if fonts.is_empty() {
+    // Cambiare tema non deve far rileggere i font: una volta scelti restano.
+    if font_info().map(|info| !info.builtin).unwrap_or(false) {
         return;
+    }
+    let plan = crate::platform::font_plan();
+    let Some(ui) = plan.ui.clone() else {
+        log::warn!("nessun font di sistema: restano quelli incorporati");
+        set_builtin_fonts(ctx);
+        return;
+    };
+
+    let mut definitions = egui::FontDefinitions::empty();
+    let mut proportional: Vec<String> = Vec::new();
+    let mut monospace: Vec<String> = Vec::new();
+
+    let name = "sys:interfaccia".to_string();
+    definitions.font_data.insert(
+        name.clone(),
+        std::sync::Arc::new(egui::FontData::from_owned(ui.bytes)),
+    );
+    proportional.push(name.clone());
+    monospace.push(name);
+
+    let mut mono_family = String::new();
+    if let Some(mono) = plan.mono.clone() {
+        let name = "sys:spaziatura".to_string();
+        definitions.font_data.insert(
+            name.clone(),
+            std::sync::Arc::new(egui::FontData::from_owned(mono.bytes)),
+        );
+        monospace.insert(0, name.clone());
+        // Anche i testi normali possono contenere cifre o simboli che nel
+        // font dell'interfaccia mancano: il monospace è una buona seconda.
+        proportional.push(name);
+        mono_family = mono.family;
     }
 
-    let mut definitions = egui::FontDefinitions::default();
-    for (name, bytes) in fonts {
+    let mut fallbacks = 0usize;
+    for (index, face) in plan.fallback.into_iter().enumerate() {
+        let name = format!("sys:riserva{index}");
+        let mut data = egui::FontData::from_owned(face.bytes);
+        // Le emoji di Noto sono disegnate grandi: senza questa correzione
+        // sbilanciano la riga rispetto al testo.
+        if face.file.to_ascii_lowercase().contains("emoji") {
+            data = data.tweak(egui::FontTweak {
+                scale: 0.85,
+                ..Default::default()
+            });
+        }
         definitions
             .font_data
-            .insert(name.clone(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            definitions
-                .families
-                .entry(family)
-                .or_default()
-                .push(name.clone());
-        }
+            .insert(name.clone(), std::sync::Arc::new(data));
+        proportional.push(name.clone());
+        monospace.push(name);
+        fallbacks += 1;
     }
+
+    definitions
+        .families
+        .insert(egui::FontFamily::Proportional, proportional);
+    definitions
+        .families
+        .insert(egui::FontFamily::Monospace, monospace);
     ctx.set_fonts(definitions);
+    log::info!(
+        "font di sistema: {} ({}) · spaziatura: {} · {fallbacks} riserve · {} file visti",
+        ui.family,
+        ui.file,
+        if mono_family.is_empty() {
+            "incorporata"
+        } else {
+            mono_family.as_str()
+        },
+        plan.scanned
+    );
+    if let Ok(mut current) = FONT_INFO.lock() {
+        *current = Some(FontInfo {
+            family: ui.family,
+            file: ui.file,
+            mono: mono_family,
+            fallbacks,
+            builtin: false,
+        });
+    }
+}
+
+/// I font compilati nel binario: ultima risorsa quando il sistema non ne ha.
+fn set_builtin_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(egui::FontDefinitions::default());
+    if let Ok(mut current) = FONT_INFO.lock() {
+        *current = Some(FontInfo {
+            family: "incorporato".to_string(),
+            file: String::new(),
+            mono: String::new(),
+            fallbacks: 0,
+            builtin: true,
+        });
+    }
 }
 
 /// Sostituisce i font senza toccare il resto del tema.
@@ -1360,7 +1464,7 @@ pub fn set_system_fonts(ctx: &egui::Context, enabled: bool) {
         install_system_fonts(ctx);
     } else {
         // Torna ai soli font incorporati nel binario.
-        ctx.set_fonts(egui::FontDefinitions::default());
+        set_builtin_fonts(ctx);
     }
 }
 
