@@ -508,7 +508,18 @@ pub fn detect_detailed() -> Detected {
         .hint
         .or_else(|| desktop.name.as_deref().map(mode_from_name))
         .unwrap_or(Mode::Dark);
-    let source = if !desktop.source.is_empty() {
+    // Nessun colore leggibile, ma un nome di tema sì: va detto, perché la
+    // diagnosi deve spiegare cosa il desktop ha chiesto.
+    let source = if let Some(name) = desktop.name.as_deref() {
+        format!(
+            "tema GTK {name} ({})",
+            if desktop.source.is_empty() {
+                "desktop"
+            } else {
+                &desktop.source
+            }
+        )
+    } else if !desktop.source.is_empty() {
         desktop.source
     } else if desktop.hint.is_some() {
         format!("preferisce {}", mode.label())
