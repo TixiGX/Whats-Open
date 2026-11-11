@@ -1711,7 +1711,7 @@ mod tests {
     fn emoji_non_allunga_la_riga_di_testo() {
         let ctx = contesto();
         let mut height = 0.0;
-        let _ = ctx.run_ui(input(), |ui| {
+        let output = ctx.run_ui(input(), |ui| {
             let galley = ui.painter().layout(
                 "Ciao! Come procede con il client? 😀".to_string(),
                 egui::FontId::proportional(14.0),
@@ -1720,6 +1720,7 @@ mod tests {
             );
             height = galley.size().y;
         });
+        output.drop_without_applying_deltas();
         assert!(
             height > 0.0 && height <= 40.0,
             "una riga di testo alta {height} px: il carattere delle emoji non deve allungare il fumetto"
@@ -1730,7 +1731,7 @@ mod tests {
     fn il_fumetto_non_prende_tutta_la_finestra() {
         let ctx = contesto();
         let mut rect = egui::Rect::NOTHING;
-        let _ = ctx.run_ui(input(), |ui| {
+        let output = ctx.run_ui(input(), |ui| {
             let inner = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                 egui::Frame::new()
                     .fill(Color32::GRAY)
@@ -1742,6 +1743,7 @@ mod tests {
             });
             rect = inner.response.rect;
         });
+        output.drop_without_applying_deltas();
         assert!(
             rect.height() > 0.0 && rect.height() < 80.0,
             "fumetto alto {} px invece di una riga e mezzo",
