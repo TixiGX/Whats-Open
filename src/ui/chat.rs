@@ -417,7 +417,13 @@ impl App {
         crate::icons::Icon::ChevronDown.paint(ui, icon, pal().text);
         if below > 0 {
             let badge = egui::Pos2::new(rect.right() - 4.0, rect.top() + 4.0);
-            ui.painter().circle_filled(badge, 8.0, pal().accent);
+            // Verde più scuro del normale e testo bianco: un numero di 9 px
+            // su un pallino deve restare leggibile.
+            ui.painter().circle_filled(
+                badge,
+                8.5,
+                crate::theme::mix(pal().accent, Color32::BLACK, 0.28),
+            );
             ui.painter().text(
                 badge,
                 Align2::CENTER_CENTER,
@@ -427,7 +433,7 @@ impl App {
                     below.to_string()
                 },
                 FontId::proportional(9.5),
-                pal().accent_text,
+                Color32::WHITE,
             );
         }
         if response.clicked() {
