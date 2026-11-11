@@ -823,7 +823,10 @@ impl App {
             "Le disegna GNOME: arrivano giuste anche le emoji.",
             "Allora manca solo il collaudo completo.",
             "Lo preparo: passi chiari e un report da compilare.",
-            "Va bene. A dopo!",
+            // L'emoji nell'ultimo messaggio finisce negli screenshot della CI:
+            // se il carattere di riserva non funzionasse si vedrebbe un
+            // quadratino invece della mano.
+            "Va bene. A dopo! 👋",
         ]
         .iter()
         .enumerate()
