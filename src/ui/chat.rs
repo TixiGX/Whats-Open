@@ -675,30 +675,39 @@ impl App {
                     }
 
                     ui.add_space(2.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if bubble.own {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::new(15.0, 10.0), Sense::hover());
-                            crate::icons::ticks(
-                                ui,
-                                rect,
-                                bubble.status,
-                                if matches!(bubble.status, Status::Read | Status::Played) {
-                                    text_color
-                                } else {
-                                    muted
-                                },
+                    // Riga dell'orario con un'altezza fissata: dentro un
+                    // layout verticale `with_layout` prenderebbe *tutta*
+                    // l'altezza rimasta, e il primo fumetto dello storico (o
+                    // l'ultimo, se la finestra è alta) diventerebbe un
+                    // rettangolo enorme con l'ora in fondo.
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(ui.available_width(), 16.0),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if bubble.own {
+                                let (rect, _) =
+                                    ui.allocate_exact_size(Vec2::new(15.0, 10.0), Sense::hover());
+                                crate::icons::ticks(
+                                    ui,
+                                    rect,
+                                    bubble.status,
+                                    if matches!(bubble.status, Status::Read | Status::Played) {
+                                        text_color
+                                    } else {
+                                        muted
+                                    },
+                                );
+                            }
+                            if bubble.edited {
+                                ui.label(RichText::new("modificato").size(9.5).color(muted));
+                            }
+                            ui.label(
+                                RichText::new(util::fmt_clock(bubble.ts))
+                                    .size(10.0)
+                                    .color(muted),
                             );
-                        }
-                        if bubble.edited {
-                            ui.label(RichText::new("modificato").size(9.5).color(muted));
-                        }
-                        ui.label(
-                            RichText::new(util::fmt_clock(bubble.ts))
-                                .size(10.0)
-                                .color(muted),
-                        );
-                    });
+                        },
+                    );
                 });
             })
             .response;
@@ -735,18 +744,22 @@ impl App {
 
         if bubble.own && bubble.status == Status::Failed {
             let failed = ui
-                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new("non inviato · riprova")
-                                .size(10.0)
-                                .color(pal().danger),
+                .allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), 14.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("non inviato · riprova")
+                                    .size(10.0)
+                                    .color(pal().danger),
+                            )
+                            .sense(egui::Sense::click()),
                         )
-                        .sense(egui::Sense::click()),
-                    )
-                    .on_hover_text("Tocca per riprovare l'invio")
-                    .clicked()
-                })
+                        .on_hover_text("Tocca per riprovare l'invio")
+                        .clicked()
+                    },
+                )
                 .inner;
             if failed {
                 self.actions.push(Action::Retry(index));
