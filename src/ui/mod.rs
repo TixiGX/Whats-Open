@@ -782,18 +782,70 @@ impl App {
         };
 
         use crate::model::{Kind, Status};
-        push("m1", &anna, &anna, false, now - 3_600, Kind::Text, "Ciao! Come procede con il client?", Status::Read, false, 0, None);
-        push("m2", &anna, &anna, true, now - 3_540, Kind::Text, "Bene, niente WebView: protocol in Rust e interfaccia egui.", Status::Read, false, 0, None);
+        // I primi due messaggi contengono emoji e simboli di proposito: la
+        // demo serve anche a vedere se il carattere del sistema li disegna.
+        push("m1", &anna, &anna, false, now - 3_600, Kind::Text, "Ciao! Come procede con il client? 😀", Status::Read, false, 0, None);
+        push("m2", &anna, &anna, true, now - 3_540, Kind::Text, "Bene, niente WebView: protocol in Rust e interfaccia egui. 🚀", Status::Read, false, 0, None);
         push("m3", &anna, &anna, false, now - 3_480, Kind::Image, "Guarda questa", Status::Read, true, 0, None);
         push("m4", &anna, &anna, false, now - 3_420, Kind::Voice, "", Status::Read, false, 42, None);
         push("m5", &anna, &anna, true, now - 3_360, Kind::Text, "Poi la ascolto con calma.", Status::Delivered, false, 0, Some((anna.as_str(), "Guarda questa")));
         push("m6", &anna, &anna, false, now - 3_300, Kind::Voice, "", Status::Read, true, 12, None);
         push("m7", &anna, &anna, false, now - 3_240, Kind::Sticker, "", Status::Read, false, 0, None);
         push("m8", &anna, &anna, false, now - 3_180, Kind::Document, "", Status::Read, false, 0, None);
+        // Un indirizzo senza spazi: deve andare a capo dentro il fumetto
+        // invece di sfondare il bordo della finestra.
+        push(
+            "m9",
+            &anna,
+            &anna,
+            false,
+            now - 3_120,
+            Kind::Text,
+            "Il link è https://example.com/documenti/2026/novembre/riunione/con-una-lista-molto-lunga-di-parole-senza-spazi?sessione=abcdef123456",
+            Status::Read,
+            false,
+            0,
+            None,
+        );
+
+        // Altri messaggi: la conversazione deve superare l'altezza della
+        // finestra, così si possono provare lo scorrimento con inerzia e il
+        // pulsante "vai in fondo" anche senza account.
+        for (index, line) in [
+            "Ah, dimenticavo: la build statica pesa meno di 20 MB.",
+            "E la finestra si apre in un decimo di secondo.",
+            "Senza WebView e senza processi in più.",
+            "Però il tema deve seguire quello del desktop, non imporsi.",
+            "Su questo hai ragione: leggo gtk-theme-name all'avvio.",
+            "E se cambio tema mentre l'app è aperta?",
+            "Rileggo tutto quando scegli «Automatico» nelle impostazioni.",
+            "Comodo. E le notifiche?",
+            "Le disegna GNOME: arrivano giuste anche le emoji.",
+            "Allora manca solo il collaudo completo.",
+            "Lo preparo: passi chiari e un report da compilare.",
+            "Va bene. A dopo!",
+        ]
+        .iter()
+        .enumerate()
+        {
+            push(
+                &format!("m{}", 10 + index),
+                &anna,
+                &anna,
+                index % 2 == 1,
+                now - 3_000 + index as i64 * 40,
+                Kind::Text,
+                line,
+                Status::Read,
+                false,
+                0,
+                None,
+            );
+        }
 
         push("g1", &group, "393331112222@s.whatsapp.net", false, now - 900, Kind::Text, "Stasera si gioca?", Status::Read, false, 0, None);
         push("g2", &group, &luca, false, now - 840, Kind::Gif, "GIF", Status::Read, false, 0, None);
-        push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua.", Status::Read, false, 0, None);
+        push("g3", &group, &luca, true, now - 780, Kind::Text, "Io ci sono, porto l'acqua. 🎉", Status::Read, false, 0, None);
 
         // `WHATS_OPEN_DEMO_SETTINGS=1`: apre le impostazioni, così la CI può
         // fotografarle senza cliccare (nella demo la finestra parte chiusa).
@@ -929,6 +981,25 @@ impl App {
     fn ensure_avatar_texture(&mut self, jid: &str, bytes: &[u8]) {
         if self.avatars.contains_key(jid) {
             return;
+        }
+        // Ogni foto è una texture RGBA: scorrendo centinaia di chat le
+        // texture si accumulerebbero. Oltre un tetto si libera la foto di una
+        // chat che non è quella aperta: egui la dimentica appena l'handle
+        // sparisce, e se serve di nuovo si ricarica dai byte già in memoria.
+        const AVATAR_LIMIT: usize = 160;
+        let selected = self.selected.clone();
+        while self.avatars.len() >= AVATAR_LIMIT {
+            let old = self
+                .avatars
+                .keys()
+                .find(|key| key.as_str() != jid && Some(key.as_str()) != selected.as_deref())
+                .cloned();
+            match old {
+                Some(old) => {
+                    self.avatars.remove(&old);
+                }
+                None => break,
+            }
         }
         let Some((image, _, _)) = gfx::image_from_bytes(bytes) else {
             return;

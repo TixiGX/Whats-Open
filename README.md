@@ -36,8 +36,17 @@ di sistema, i video da ffmpeg o dal player di sistema.
   impiega per le altre finestre (`font-name` di GNOME, `gtk-font-name` o
   `kdeglobals`), con i file di sistema come riserva per emoji e alfabeti non
   latini: nessun font incorporato da mostrare, nessun download
+- **Emoji e simboli sempre disegnati**: al carattere del desktop si
+  affiancano, in coda, quelli già compilati in egui; si usano solo per i
+  glifi che il sistema non ha e non occupano memoria finché non servono
+  (il font a colori di Debian, che qui non si può disegnare, viene saltato)
 - **Notifiche di sistema** per messaggi e chiamate, con clic che riporta la
   finestra davanti: D-Bus diretto, nessun `notify-send`, nessun processo extra
+- **Interfaccia a schede**: barra laterale e conversazione come pannelli
+  staccati e arrotondati, riga scelta a pillola verde, pulsanti tondi in
+  testata, barre di scorrimento sottili che compaiono al passaggio del mouse
+- **Scorrimento morbido** con inerzia e pulsante tondo per tornare in fondo
+  alla chat (con il conteggio dei messaggi non letti quando si è lontani)
 - Log su file (con rotazione) e diagnostica integrata
 
 Non ci sono storie, canali né videochiamate: l'obiettivo è un client leggero,
@@ -240,6 +249,14 @@ ascolto: cliccare la notifica riporta davanti la finestra.
   errore, nessun processo avviato. `whats-open --notify-check` dice se il
   servizio c'è e risponde.
 
+### Collaudo completo su una macchina vera
+
+`TEST-COMPLETO.md` contiene il collaudo passo per passo (comandi, demo,
+screenshot, memoria e CPU, chiamate, view-once, notifiche) pensato per essere
+eseguito da un'AI con accesso al terminale; `report-TEST.md` è il modulo già
+pronto con tutte le righe `OK`/`FAIL`/`NON ESEGUITO` da compilare e
+rimandare.
+
 ### Collaudo senza account
 
 `whats-open --selftest` (alias `--collaudo`) esercita il binario vero su tutto
@@ -306,9 +323,12 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
    si sente o si parla da una sola parte invece di fallire.
 7. **Selettore file che non risponde**: installa `xdg-desktop-portal` e
    `zenity`, oppure usa **Allega → Da percorso…**.
-8. **Testo in arabo, cinese o emoji quadretti**: installa i font Noto della tua
-   lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`); l'app li carica
-   automaticamente come riserva, insieme al carattere dell'interfaccia.
+8. **Testo in arabo, cinese o emoji quadretti**: le emoji hanno già una
+   riserva compilata nel programma (contorni, non a colori: il font a colori
+   di Debian è bitmap e non è disegnabile qui), quindi non devono più
+   comparire quadratini. Se restano, per gli altri alfabeti installa i font
+   Noto della tua lingua (`fonts-noto`, `noto-fonts`, `noto-fonts-cjk`):
+   l'app li carica automaticamente insieme al carattere dell'interfaccia.
    **L'interfaccia non somiglia al resto della scrivania**: il carattere si
    legge da `font-name` (GNOME), `gtk-font-name` (GTK) o `kdeglobals` (KDE);
    con `--doctor` la riga `font interfaccia` dice quale file è stato scelto e
