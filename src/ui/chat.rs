@@ -219,7 +219,7 @@ impl App {
                             "Videochiamata"
                         };
                         if crate::icons::Icon::Video
-                            .button(ui, 32.0, color)
+                            .circle_button(ui, 32.0, color)
                             .on_hover_text(hover)
                             .clicked()
                             && enabled
@@ -234,7 +234,7 @@ impl App {
                             "Chiamata vocale"
                         };
                         if crate::icons::Icon::Phone
-                            .button(ui, 32.0, color)
+                            .circle_button(ui, 32.0, color)
                             .on_hover_text(hover)
                             .clicked()
                             && enabled

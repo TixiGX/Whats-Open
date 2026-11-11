@@ -46,14 +46,14 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(12.0);
                 if crate::icons::Icon::Gear
-                    .button(ui, 32.0, pal().muted)
+                    .circle_button(ui, 32.0, pal().muted)
                     .on_hover_text("Impostazioni")
                     .clicked()
                 {
                     open_settings = true;
                 }
                 if crate::icons::Icon::Plus
-                    .button(ui, 32.0, pal().muted)
+                    .circle_button(ui, 32.0, pal().muted)
                     .on_hover_text("Nuova chat")
                     .clicked()
                 {
@@ -242,9 +242,9 @@ fn chat_row(
     {
         let painter = ui.painter();
         if selected {
-            painter.rect_filled(rect, egui::CornerRadius::same(10), crate::theme::selected_row());
+            painter.rect_filled(rect, egui::CornerRadius::same(14), crate::theme::selected_row());
         } else if response.hovered() {
-            painter.rect_filled(rect, egui::CornerRadius::same(10), pal().hover);
+            painter.rect_filled(rect, egui::CornerRadius::same(14), pal().hover);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
     }

@@ -464,6 +464,30 @@ impl Icon {
         response
     }
 
+    /// Bottone tondo con un disco appena accennato: la testata dei programmi
+    /// di GNOME usa questi cerchi per le azioni, invece delle icone nude.
+    pub fn circle_button(self, ui: &mut Ui, size: f32, color: Color32) -> Response {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+        let hovered = response.hovered();
+        let pal = crate::theme::pal();
+        ui.painter().circle_filled(
+            rect.center(),
+            size * 0.5,
+            if hovered { pal.hover } else { pal.surface },
+        );
+        ui.painter().circle_stroke(
+            rect.center(),
+            size * 0.5 - 0.5,
+            Stroke::new(1.0, pal.border),
+        );
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let glyph = Rect::from_center_size(rect.center(), Vec2::splat(size * 0.5));
+        self.paint(ui, glyph, if hovered { pal.text } else { color });
+        response
+    }
+
     /// Bottone pieno e tondo: serve al pollice dell'invio, dove il cerchio
     /// pieno dice "premi qui" meglio di un'icona nuda.
     pub fn filled_button(self, ui: &mut Ui, size: f32, icon: Color32, fill: Color32) -> Response {
