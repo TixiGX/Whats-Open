@@ -916,6 +916,13 @@ impl App {
             .collect();
         self.sort_chats();
         self.scroll_bottom = true;
+        // `WHATS_OPEN_DEMO_SCROLL=1`: parte a metà dello storico, così si vede
+        // (e la CI fotografa) il pulsante "vai in fondo" con il conteggio.
+        if std::env::var_os("WHATS_OPEN_DEMO_SCROLL").is_some() {
+            self.scroll_bottom = false;
+            self.follow_bottom = false;
+            self.scroll_pending = -600.0;
+        }
     }
 
     /// Unisce una chat nata con indirizzamento LID alla chat del numero.

@@ -177,6 +177,16 @@ Nella chat di Anna (molti messaggi, la finestra non li contiene tutti):
 5. Il fondo della chat deve essere raggiungibile sempre, anche con la
    finestra molto bassa (prova `WHATS_OPEN_WINDOW=560x430`).
 
+Per fotografare subito il pulsante senza scorrere a mano, la demo può partire
+già a metà storico:
+
+```bash
+WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_SCROLL=1 "$BIN" &
+```
+
+Screenshot: `04b-vai-in-fondo.png` (pulsante con il conteggio dei messaggi
+altrui rimasti sotto).
+
 Per registrare il movimento: `wf-recorder -f scroll.mp4` (Wayland) oppure
 `ffmpeg -f x11grab -i :0 -t 5 scroll.mp4` (X11); in alternativa descrivi a
 parole ciò che vedi.

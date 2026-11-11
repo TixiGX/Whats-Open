@@ -299,7 +299,10 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
 | `LIBGL_ALWAYS_SOFTWARE=1` | rendering software (schede senza driver OpenGL) |
 | `RUST_LOG=debug` | log più verboso |
 | `WHATS_OPEN_DEMO=1` | apre l'interfaccia con conversazioni di prova, senza account e senza rete (l'invio è disattivato) |
-| `WHATS_OPEN_THEME=light|dark` | forza il tema chiaro o scuro |
+| `WHATS_OPEN_DEMO_SCROLL=1` | nella demo parte a metà dello storico, per vedere il pulsante "vai ai messaggi più recenti" |
+| `WHATS_OPEN_DEMO_SETTINGS=1` | apre le impostazioni all'avvio (demo) |
+| `WHATS_OPEN_DEMO_CALL=video\|audio` | mostra il pannello di una chiamata attiva (demo) |
+| `WHATS_OPEN_THEME=light\|dark` | forza il tema chiaro o scuro |
 | `WHATS_OPEN_WINDOW=560x430` | dimensione iniziale della finestra |
 
 ## Se qualcosa non funziona

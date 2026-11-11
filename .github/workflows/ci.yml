@@ -441,6 +441,26 @@ jobs:
           kill "$call" 2>/dev/null
           sleep 1
 
+          # Settima istanza: la demo a metà dello storico, per controllare a
+          # occhio il pulsante "vai in fondo" e il conteggio dei messaggi.
+          mkdir -p smoke/jhome smoke/jdata smoke/jcache smoke/jruntime
+          chmod 700 smoke/jruntime
+          HOME="$PWD/smoke/jhome" XDG_RUNTIME_DIR="$PWD/smoke/jruntime" \
+            XDG_DATA_HOME="$PWD/smoke/jdata" XDG_CACHE_HOME="$PWD/smoke/jcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_SCROLL=1 \
+            "$bin" > smoke/jout.log 2> smoke/jerr.log &
+          jump=$!
+          sleep 8
+          if kill -0 "$jump" 2>/dev/null; then
+            echo "== demo a metà storico: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== demo a metà storico: uscita da sola ==" >> smoke.log
+            tail -10 smoke/jerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/jump.png 2> smoke/jump.err
+          kill "$jump" 2>/dev/null
+          sleep 1
+
           # Sesta istanza: le impostazioni aperte, per controllare a occhio
           # interruttori, pastiglie del tema e riepilogo del carattere.
           mkdir -p smoke/shome smoke/sdata smoke/scache smoke/sruntime
@@ -491,6 +511,7 @@ jobs:
           post_image SETTINGS_B64 smoke/settings.png
           post_image LIGHT_B64 smoke/light.png
           post_image CALL_B64 smoke/call.png
+          post_image JUMP_B64 smoke/jump.png
 
           cat smoke.log
           grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
