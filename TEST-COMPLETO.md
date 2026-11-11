@@ -158,7 +158,13 @@ Nella stessa chat:
 * l'ora e le spunte restano allineate in basso a destra, anche sui messaggi
   su più righe;
 * i nomi lunghi nella lista a sinistra sono troncati con `…`, non spezzati;
-* il messaggio citato (risposta) resta dentro il fumetto.
+* il messaggio citato (risposta) resta dentro il fumetto;
+* scorrendo **fino in cima allo storico**, il primo messaggio è un fumetto
+  normale (alto quanto il testo), non un rettangolo alto quanto la finestra
+  con l'ora in fondo. Vale anche per l'ultimo messaggio di una conversazione
+  corta;
+* dentro il fumetto, ora e spunte stanno subito sotto l'ultima riga di testo,
+  allineate a destra.
 
 ### T6 — Scorrimento con inerzia e pulsante "vai in fondo"
 
@@ -168,8 +174,9 @@ Nella chat di Anna (molti messaggi, la finestra non li contiene tutti):
    qualche decimo di secondo e fermarsi morbido, non saltare di un dentello
    alla volta. Vale anche sul touchpad.
 2. Mentre sei in alto deve comparire in basso a destra, sopra il compositore,
-   un **pulsante tondo con la freccia in giù**; se ci sono messaggi non letti
-   in basso mostra anche il conteggio.
+   un **pulsante tondo con la freccia in giù**; se ci sono messaggi altrui
+   sotto il bordo mostra anche un pallino verde con il conteggio (99+ oltre
+   il centinaio).
 3. Premi il pulsante: si torna in fondo e il pulsante sparisce.
 4. Scorri in alto, poi aspetta: la chat **non deve tornare in fondo da sola**
    quando arriva un messaggio nuovo (nella demo non arrivano, ma la posizione
