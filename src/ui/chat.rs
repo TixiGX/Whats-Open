@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use egui::{Color32, RichText, Sense, TextureHandle, Vec2};
+use egui::{Align2, Color32, FontId, RichText, Sense, TextureHandle, Vec2};
 
 use crate::engine::Cmd;
 use crate::media;
@@ -322,6 +322,10 @@ impl App {
                 ..Default::default()
             });
 
+        // Posizione di ogni fumetto: serve a contare quelli rimasti sotto il
+        // bordo quando si sta leggendo lo storico.
+        let mut spans: Vec<(f32, f32, bool)> = Vec::with_capacity(self.messages.len());
+
         let output = area.show(ui, |ui| {
             ui.set_width(ui.available_width());
             if step != 0.0 {
@@ -340,7 +344,10 @@ impl App {
                 // Messaggi ravvicinati dello stesso interlocutore stanno più
                 // stretti: si legge come un discorso, non come un elenco.
                 let tight = index > 0 && grouped(&self.messages[index - 1], &self.messages[index]);
+                let top = ui.cursor().top();
+                let mine = self.messages[index].from_me;
                 self.bubble_ui(ui, index, tight);
+                spans.push((top, ui.min_rect().bottom(), mine));
             }
             if self.messages.is_empty() {
                 ui.add_space(24.0);
@@ -363,16 +370,27 @@ impl App {
         }
         self.scroll_rect = Some(output.inner_rect);
         self.scroll_below = !at_bottom && max > 0.0;
-        if self.scroll_below {
-            self.jump_button(ui, output.inner_rect);
-            // La chat non è a fondo: se resta ferma, la vista resta com'è.
-            self.follow_bottom = false;
-        }
+        // Azzerato *prima* del pulsante: se lo si preme, la richiesta deve
+        // arrivare al fotogramma successivo (subito dopo veniva cancellata e
+        // il clic non faceva nulla).
         self.scroll_bottom = false;
+        if self.scroll_below {
+            let below = spans
+                .iter()
+                .filter(|(top, _, mine)| *top >= output.inner_rect.bottom() && !*mine)
+                .count();
+            self.jump_button(ui, output.inner_rect, below);
+            if !self.scroll_bottom {
+                // La chat non è a fondo: se resta ferma, la vista resta com'è.
+                // (Se si è appena premuto il pulsante, invece, si torna giù.)
+                self.follow_bottom = false;
+            }
+        }
     }
 
-    /// Pastiglia circolare in basso a destra: riporta al fondo della chat.
-    fn jump_button(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+    /// Pastiglia circolare in basso a destra: riporta al fondo della chat e
+    /// dice quanti messaggi altrui restano sotto il bordo visibile.
+    fn jump_button(&mut self, ui: &mut egui::Ui, area: egui::Rect, below: usize) {
         let size = 42.0;
         let center = egui::Pos2::new(area.right() - size * 0.5 - 14.0, area.bottom() - size * 0.5 - 10.0);
         let rect = egui::Rect::from_center_size(center, Vec2::splat(size));
@@ -397,6 +415,21 @@ impl App {
         );
         let icon = egui::Rect::from_center_size(rect.center(), Vec2::splat(18.0));
         crate::icons::Icon::ChevronDown.paint(ui, icon, pal().text);
+        if below > 0 {
+            let badge = egui::Pos2::new(rect.right() - 4.0, rect.top() + 4.0);
+            ui.painter().circle_filled(badge, 8.0, pal().accent);
+            ui.painter().text(
+                badge,
+                Align2::CENTER_CENTER,
+                if below > 99 {
+                    "99+".to_string()
+                } else {
+                    below.to_string()
+                },
+                FontId::proportional(9.5),
+                pal().accent_text,
+            );
+        }
         if response.clicked() {
             self.follow_bottom = true;
             self.scroll_pending = 0.0;
