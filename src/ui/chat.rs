@@ -451,10 +451,15 @@ impl App {
         // messaggi brevi restano stretti invece di allargarsi a vuoto.
         let max_width = (ui.available_width() * 0.78).clamp(210.0, 560.0);
 
+        // Allineamento in alto (Min), non in basso: con `Align::Max` il
+        // contenitore prendeva tutta l'altezza rimasta dello storico, e il
+        // primo fumetto diventava un rettangolo alto quanto la finestra.
+        // Ogni riga ha un solo fumetto, quindi l'allineamento verticale non
+        // cambia nulla nell'aspetto.
         let layout = if bubble.own {
-            egui::Layout::right_to_left(egui::Align::Max)
+            egui::Layout::right_to_left(egui::Align::Min)
         } else {
-            egui::Layout::left_to_right(egui::Align::Max)
+            egui::Layout::left_to_right(egui::Align::Min)
         };
 
         ui.with_layout(layout, |ui| {
@@ -1681,5 +1686,70 @@ fn day_label(ts: i64) -> String {
         "Ieri".to_string()
     } else {
         local.format("%d/%m/%Y").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contesto() -> egui::Context {
+        egui::Context::default()
+    }
+
+    fn input() -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::Vec2::new(800.0, 600.0),
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn emoji_non_allunga_la_riga_di_testo() {
+        let ctx = contesto();
+        let mut height = 0.0;
+        let _ = ctx.run(input(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let galley = ui.painter().layout(
+                    "Ciao! Come procede con il client? 😀".to_string(),
+                    egui::FontId::proportional(14.0),
+                    Color32::WHITE,
+                    300.0,
+                );
+                height = galley.size().y;
+            });
+        });
+        assert!(
+            height > 0.0 && height <= 40.0,
+            "una riga di testo alta {height} px: il carattere delle emoji non deve allungare il fumetto"
+        );
+    }
+
+    #[test]
+    fn il_fumetto_non_prende_tutta_la_finestra() {
+        let ctx = contesto();
+        let mut rect = egui::Rect::NOTHING;
+        let _ = ctx.run(input(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let inner = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::GRAY)
+                        .inner_margin(egui::Margin::symmetric(12, 7))
+                        .show(ui, |ui| {
+                            ui.set_width(220.0);
+                            ui.label("Ciao! Come procede con il client? 😀");
+                        });
+                });
+                rect = inner.response.rect;
+            });
+        });
+        assert!(
+            rect.height() > 0.0 && rect.height() < 80.0,
+            "fumetto alto {} px invece di una riga e mezzo",
+            rect.height()
+        );
     }
 }
