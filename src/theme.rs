@@ -1334,6 +1334,8 @@ pub struct FontInfo {
     pub file: String,
     pub mono: String,
     pub fallbacks: usize,
+    /// Da dove viene la famiglia: "gsettings", "gtk-font-name", …
+    pub source: String,
     /// `true` se il sistema non aveva font e sono rimasti quelli incorporati.
     pub builtin: bool,
 }
@@ -1484,6 +1486,7 @@ pub fn install_system_fonts(ctx: &egui::Context) {
             file: ui_file,
             mono: mono_family,
             fallbacks,
+            source: plan.source.to_string(),
             builtin: false,
         });
     }
@@ -1538,6 +1541,7 @@ fn set_builtin_fonts(ctx: &egui::Context) {
             file: String::new(),
             mono: String::new(),
             fallbacks: 0,
+            source: String::new(),
             builtin: true,
         });
     }

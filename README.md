@@ -311,7 +311,9 @@ OK   percorso video             15 access unit H.264, 15 fotogrammi decodificati
    automaticamente come riserva, insieme al carattere dell'interfaccia.
    **L'interfaccia non somiglia al resto della scrivania**: il carattere si
    legge da `font-name` (GNOME), `gtk-font-name` (GTK) o `kdeglobals` (KDE);
-   con `--doctor` la riga `font interfaccia` dice quale file è stato scelto.
+   con `--doctor` la riga `font interfaccia` dice quale file è stato scelto e
+   da dove viene la famiglia (`gsettings`, `gtk-font-name`, `kdeglobals`); la
+   stessa indicazione compare nelle impostazioni, passando il mouse sul nome.
 9. **`error: could not compile ... (signal: 9, SIGKILL)`**: è il kernel che
    uccide `rustc` per mancanza di RAM. Compila con `cargo build --release -j 2`
    (o `-j 1`), chiudi le altre applicazioni oppure usa gli archivi precompilati.

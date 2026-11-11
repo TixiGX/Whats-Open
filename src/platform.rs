@@ -162,8 +162,17 @@ pub fn report(paths: &crate::util::Paths) -> String {
             (Some(info), _) if info.builtin => {
                 "incorporato nel programma (nessun font di sistema)".to_string()
             }
-            (Some(info), _) => format!("{} ({})", info.family, info.file),
-            (None, Some(face)) => format!("{} ({})", face.family, face.file),
+            (Some(info), _) => format!(
+                "{} ({}){}",
+                info.family,
+                info.file,
+                if info.source.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · da {}", info.source)
+                }
+            ),
+            (None, Some(face)) => format!("{} ({}) · da {}", face.family, face.file, plan.source),
             (None, None) => "nessuno: si usano i font incorporati".to_string(),
         }
     ));
@@ -327,6 +336,9 @@ pub struct FontPlan {
     pub fallback: Vec<FontFace>,
     /// Quanti file di font sono stati visti nelle cartelle del sistema.
     pub scanned: usize,
+    /// Da dove viene la famiglia scelta: "gsettings", "gtk-font-name",
+    /// "kdeglobals", "WHATS_OPEN_FONT", oppure il ripiego.
+    pub source: &'static str,
 }
 
 /// Le famiglie che hanno l'aspetto giusto per una finestra di chat, in ordine
@@ -423,15 +435,18 @@ const FALLBACK_FILES: [&str; 18] = [
 /// Legge dal desktop quale famiglia usa per l'interfaccia. Nessun processo
 /// avviato a mano: `settings.ini` di GTK e `kdeglobals`; su GNOME, dove il
 /// carattere sta in dconf, una sola domanda a `gsettings` all'avvio.
-pub fn desktop_font_family() -> Option<String> {
+///
+/// Torna anche *dove* l'ha letto: serve alla diagnostica, quando l'interfaccia
+/// non somiglia al resto della scrivania.
+pub fn desktop_font() -> Option<(String, &'static str)> {
     if let Ok(value) = std::env::var("WHATS_OPEN_FONT") {
         let value = family_of(&value);
         if !value.is_empty() {
-            return Some(value);
+            return Some((value, "WHATS_OPEN_FONT"));
         }
     }
     if let Some(family) = gsettings_font_family() {
-        return Some(family);
+        return Some((family, "gsettings"));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     for variant in ["gtk-4.0", "gtk-3.0"] {
@@ -442,7 +457,7 @@ pub fn desktop_font_family() -> Option<String> {
         if let Some(value) = crate::theme::ini_value(&text, "gtk-font-name") {
             let family = family_of(&value);
             if !family.is_empty() {
-                return Some(family);
+                return Some((family, "gtk-font-name"));
             }
         }
     }
@@ -452,7 +467,7 @@ pub fn desktop_font_family() -> Option<String> {
             if let Some(value) = crate::theme::ini_section_value(&text, "General", key) {
                 let family = family_of(&value);
                 if !family.is_empty() {
-                    return Some(family);
+                    return Some((family, "kdeglobals"));
                 }
             }
         }
@@ -760,21 +775,32 @@ pub fn font_plan() -> FontPlan {
     files.dedup();
     let scanned = files.len();
 
-    let preferred = desktop_font_family();
+    let preferred = desktop_font();
     let mut order: Vec<String> = Vec::new();
-    if let Some(preferred) = preferred {
-        order.push(preferred);
+    if let Some((family, _)) = preferred.as_ref() {
+        order.push(family.clone());
     }
     for family in UI_FAMILIES {
         order.push(family.to_string());
     }
 
     let mut chosen: Option<PathBuf> = None;
-    for family in &order {
+    let mut source = "famiglia preferita";
+    for (index, family) in order.iter().enumerate() {
         if let Some(path) = pick_family(family, &files) {
             chosen = Some(path);
+            // Il primo nome dell'elenco è quello del desktop; il resto è il
+            // ripiego sulle famiglie che ci sono quasi sempre.
+            if index == 0 {
+                if let Some((_, origin)) = preferred.as_ref() {
+                    source = origin;
+                }
+            }
             break;
         }
+    }
+    if chosen.is_none() {
+        source = "primo font disponibile";
     }
     let chosen = chosen.or_else(|| pick_any(&files));
 
@@ -793,6 +819,7 @@ pub fn font_plan() -> FontPlan {
 
     let mut plan = FontPlan {
         scanned,
+        source,
         ..Default::default()
     };
     if let Some(path) = chosen {

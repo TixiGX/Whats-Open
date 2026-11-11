@@ -1111,8 +1111,13 @@ impl App {
                     format!("{detail}\nnessun file di sistema trovato")
                 } else {
                     format!(
-                        "{detail}\nfile: {}\nspaziatura: {}\nriserve caricate: {}",
+                        "{detail}\nfile: {}\nscelta da: {}\nspaziatura: {}\nriserve caricate: {}",
                         info.file,
+                        if info.source.is_empty() {
+                            "nessuna (incorporato)"
+                        } else {
+                            info.source.as_str()
+                        },
                         if info.mono.is_empty() {
                             "come l'interfaccia"
                         } else {
