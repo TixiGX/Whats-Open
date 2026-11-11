@@ -1,0 +1,592 @@
+name: ci
+
+# Compila, prova e impacchetta Whats-Open per ogni distribuzione Linux.
+#
+#  * check      : cargo check + cargo test su ubuntu-22.04 (feedback rapido)
+#  * glibc      : binario dinamico compilato su Ubuntu 20.04 (glibc 2.31),
+#                 compatibile con Debian 11+, Ubuntu 20.04+, Fedora 33+,
+#                 RHEL 9+, openSUSE Leap 15.4+, Arch e derivate
+#  * musl       : binario statico, gira su qualunque Linux (Alpine, NixOS,
+#                 distribuzioni con glibc più vecchia della 2.31, …).
+#                 alsa-lib viene compilata in versione statica nel job.
+#  * package    : tarball con binario, icone, .desktop e install.sh
+#
+# I log delle Actions non sono sempre scaricabili: in caso di errore gli ultimi
+# 60 KB finiscono in un commento sul commit, più qualche ::error:: come
+# annotazione. Vale per tutti i job.
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check:
+    name: check & test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Librerie di sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev dbus
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        run: |
+          set -o pipefail
+          cargo check --all-targets 2>&1 | tee check.log
+
+      - name: cargo test
+        if: success()
+        env:
+          # Il test che parla con un dbus-daemon vero non deve essere saltato.
+          WHATS_OPEN_REQUIRE_DBUS: "1"
+        run: |
+          set -o pipefail
+          cargo test --all-targets 2>&1 | tee test.log
+
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          cat check.log test.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          grep -E "^(error|warning: unused)" errors.log | head -20 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          tail -c 60000 errors.log | jq -Rs '{body: .}' > body.json
+          gh api "repos/$REPO/commits/$SHA/comments" --input body.json >/dev/null 2>&1 || true
+
+  glibc:
+    name: build glibc (Ubuntu 20.04)
+    needs: check
+    runs-on: ubuntu-22.04
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Strumenti
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update > tools.log 2>&1
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates build-essential pkg-config git jq file \
+            libasound2-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libssl-dev >> tools.log 2>&1 \
+            || { tail -30 tools.log | sed 's/^/::error::/'; exit 1; }
+
+      - name: Toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: cargo build --release
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tee build.log
+
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          tail -c 60000 tools.log build.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          tail -20 errors.log | sed 's/^/::error::/'
+          jq -Rs '{body: .}' errors.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
+
+      - name: Verifica
+        run: |
+          file target/release/whats-open
+          ldd target/release/whats-open > ldd.log 2>&1 || true
+          head -5 ldd.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whats-open-glibc
+          path: target/release/whats-open
+          if-no-files-found: error
+
+  musl:
+    name: build musl (statico)
+    needs: check
+    runs-on: ubuntu-22.04
+    container: alpine:3.22
+    defaults:
+      run:
+        shell: sh
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Strumenti
+        run: |
+          apk add --no-cache \
+            build-base musl-dev pkgconf git curl ca-certificates tar gzip jq file \
+            autoconf automake libtool linux-headers > tools.log 2>&1 \
+            || { tail -30 tools.log | sed 's/^/::error::/'; exit 1; }
+
+      - name: alsa-lib statica
+        run: |
+          set -e
+          cd /tmp
+          curl -sSfL -o alsa.tgz \
+            https://codeload.github.com/alsa-project/alsa-lib/tar.gz/refs/tags/v1.2.14
+          tar xzf alsa.tgz
+          cd alsa-lib-1.2.14
+          if ! autoreconf -fi > /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::autoreconf /'; exit 1
+          fi
+          if ! ./configure --prefix=/usr/local --disable-shared --enable-static \
+                --disable-python >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::configure /'; exit 1
+          fi
+          if ! make -j"$(nproc)" >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::make /'; exit 1
+          fi
+          if ! make install >> /tmp/alsa.log 2>&1; then
+            tail -40 /tmp/alsa.log | sed 's/^/::error::install /'; exit 1
+          fi
+
+      - name: Toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: cargo build --release (musl)
+        env:
+          PKG_CONFIG_ALL_STATIC: "1"
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl > build.log 2>&1 \
+            || { tail -60 build.log | sed 's/^/::error::/'; exit 1; }
+
+      - name: Pubblica gli errori sul commit
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set +e
+          tail -c 60000 tools.log /tmp/alsa.log build.log 2>/dev/null > errors.log
+          test -s errors.log || exit 0
+          jq -Rs '{body: .}' errors.log > body.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @body.json > /dev/null || true
+
+      - name: Verifica che sia davvero statico
+        run: |
+          file target/x86_64-unknown-linux-musl/release/whats-open > file.log 2>&1 || true
+          cat file.log
+          grep -Eq "statically linked|static-pie linked" file.log \
+            || { echo "::error::il binario musl non è statico"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whats-open-musl
+          path: target/x86_64-unknown-linux-musl/release/whats-open
+          if-no-files-found: error
+
+  package:
+    name: pacchetto
+    needs: [glibc, musl]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whats-open-glibc
+          path: staging/glibc
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whats-open-musl
+          path: staging/musl
+
+      - name: Tarball
+        run: |
+          set -e
+          for flavor in glibc musl; do
+            root="pkg/whats-open-0.1.0-linux-x86_64-$flavor"
+            mkdir -p "$root/bin" "$root/share/applications" "$root/share/icons/hicolor"
+            install -m755 "staging/$flavor/whats-open" "$root/bin/whats-open"
+            install -m644 res/whats-open.desktop "$root/share/applications/whats-open.desktop"
+            for size in 16 24 32 48 64 128 256 512; do
+              dir="$root/share/icons/hicolor/${size}x${size}/apps"
+              mkdir -p "$dir"
+              install -m644 "dist/icons/whats-open-$size.png" "$dir/whats-open.png"
+            done
+            install -m755 packaging/install.sh "$root/install.sh"
+            install -m644 README.md LICENSE "$root/"
+            tar -C pkg -czf "whats-open-linux-x86_64-$flavor.tar.gz" \
+              "whats-open-0.1.0-linux-x86_64-$flavor"
+          done
+          ls -lh *.tar.gz
+
+      - name: Collaudo del binario
+        run: |
+          set +e
+          sudo apt-get update > /dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth imagemagick libgl1-mesa-dri libegl1 libglx-mesa0 \
+            libxkbcommon-x11-0 libasound2 fontconfig fonts-dejavu-core ffmpeg \
+            > apt.log 2>&1
+          bin="pkg/whats-open-0.1.0-linux-x86_64-glibc/bin/whats-open"
+          mkdir -p smoke/home smoke/data smoke/cache smoke/runtime
+          chmod 700 smoke/runtime
+          {
+            echo "== --version =="
+            "$bin" --version
+            echo "== --help =="
+            "$bin" --help | head -20
+            echo "== --doctor =="
+            HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor
+            echo "== --doctor con tema MacOS-Tahoe =="
+            mkdir -p smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0 \
+              smoke/home-tema/.config/gtk-3.0
+            printf '@define-color theme_bg_color #f5f5f5;\n@define-color theme_base_color #ffffff;\n@define-color theme_fg_color #242424;\n@define-color theme_selected_bg_color #0088ff;\n' \
+              > smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0/gtk.css
+            printf '@define-color theme_bg_color #333333;\n@define-color theme_base_color #242424;\n@define-color theme_fg_color #dedede;\n@define-color theme_selected_bg_color #0088ff;\n' \
+              > smoke/home-tema/.themes/MacOS-Tahoe/gtk-3.0/gtk-dark.css
+            printf '[Settings]\ngtk-theme-name=MacOS-Tahoe\n' \
+              > smoke/home-tema/.config/gtk-3.0/settings.ini
+            HOME="$PWD/smoke/home-tema" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --doctor \
+              > smoke/doctor-tema.log 2>&1
+            cat smoke/doctor-tema.log
+            echo "== --audio-check =="
+            printf 'pcm.!default { type null }\nctl.!default { type null }\n' \
+              > smoke/alsa-null.conf
+            audio_ok=0
+            if ALSA_CONFIG_PATH="$PWD/smoke/alsa-null.conf" \
+              HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --audio-check; then
+              audio_ok=1
+            fi
+            echo "audio-check ok: $audio_ok"
+            echo "== --video-check =="
+            video_ok=0
+            if HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --video-check; then
+              video_ok=1
+            fi
+            echo "video-check ok: $video_ok"
+            echo "== --selftest =="
+            selftest_ok=0
+            if ALSA_CONFIG_PATH="$PWD/smoke/alsa-null.conf" \
+              HOME="$PWD/smoke/home" XDG_DATA_HOME="$PWD/smoke/data" \
+              XDG_CACHE_HOME="$PWD/smoke/cache" "$bin" --selftest; then
+              selftest_ok=1
+            fi
+            echo "selftest ok: $selftest_ok"
+          } > smoke.log 2>&1
+
+          # Il tema nativo deve essere letto dal binario vero, non solo dal
+          # collaudo interno: qui c'è un gtk.css con i colori di MacOS Tahoe.
+          if grep -q "MacOS-Tahoe" smoke/doctor-tema.log; then
+            echo "tema nativo letto dal binario: sì" | tee -a smoke.log
+          else
+            echo "::error::il binario non ha letto il tema GTK MacOS-Tahoe"
+          fi
+
+          Xvfb :99 -screen 0 1280x800x24 > xvfb.log 2>&1 &
+          sleep 2
+          HOME="$PWD/smoke/home" XDG_RUNTIME_DIR="$PWD/smoke/runtime" \
+            XDG_DATA_HOME="$PWD/smoke/data" XDG_CACHE_HOME="$PWD/smoke/cache" \
+            DISPLAY=:99 "$bin" > smoke/out.log 2> smoke/err.log &
+          app=$!
+          sleep 18
+          if kill -0 "$app" 2>/dev/null; then
+            echo "== l'app è ancora viva dopo 18 s ==" >> smoke.log
+          else
+            echo "== l'app è uscita da sola ==" >> smoke.log
+          fi
+          # Quanto costa tenerla aperta: CPU in 4 secondi e memoria residente.
+          cpu_a=$(awk '{print $14 + $15}' "/proc/$app/stat")
+          sleep 4
+          cpu_b=$(awk '{print $14 + $15}' "/proc/$app/stat")
+          rss=$(awk '/VmRSS/ {print $2}' "/proc/$app/status")
+          echo "== risorse: $(( (cpu_b - cpu_a) * 10 )) ms di CPU in 4 s · ${rss} kB di memoria ==" >> smoke.log
+          if [ "${rss:-0}" -gt 524288 ]; then
+            echo "::warning::memoria oltre 512 MB: ${rss} kB"
+          fi
+          if [ $(( (cpu_b - cpu_a) * 10 )) -gt 800 ]; then
+            echo "::warning::CPU alta a finestra ferma: $(( (cpu_b - cpu_a) * 10 )) ms in 4 s"
+          fi
+          import -display :99 -window root smoke/shot.png 2> smoke/shot.err
+          kill "$app" 2>/dev/null
+          sleep 1
+          echo "-- stdout --" >> smoke.log; tail -20 smoke/out.log >> smoke.log
+          echo "-- stderr --" >> smoke.log; tail -20 smoke/err.log >> smoke.log
+          echo "-- log applicativo --" >> smoke.log
+          tail -40 smoke/cache/whats-open/whats-open.log >> smoke.log 2>/dev/null
+
+          # Seconda istanza in modalità dimostrazione: serve a vedere la
+          # schermata delle chat senza un account vero.
+          mkdir -p smoke/dhome smoke/ddata smoke/dcache smoke/druntime
+          chmod 700 smoke/druntime
+          HOME="$PWD/smoke/dhome" XDG_RUNTIME_DIR="$PWD/smoke/druntime" \
+            XDG_DATA_HOME="$PWD/smoke/ddata" XDG_CACHE_HOME="$PWD/smoke/dcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 "$bin" > smoke/dout.log 2> smoke/derr.log &
+          demo=$!
+          sleep 10
+          if kill -0 "$demo" 2>/dev/null; then
+            echo "== demo: ancora viva dopo 10 s ==" >> smoke.log
+          else
+            echo "== demo: uscita da sola ==" >> smoke.log
+            tail -20 smoke/derr.log >> smoke.log
+          fi
+          dcpu_a=$(awk '{print $14 + $15}' "/proc/$demo/stat")
+          sleep 4
+          dcpu_b=$(awk '{print $14 + $15}' "/proc/$demo/stat")
+          drss=$(awk '/VmRSS/ {print $2}' "/proc/$demo/status")
+          echo "== risorse demo: $(( (dcpu_b - dcpu_a) * 10 )) ms di CPU in 4 s · ${drss} kB di memoria ==" >> smoke.log
+          import -display :99 -window root smoke/demo.png 2> smoke/demo.err
+          kill "$demo" 2>/dev/null
+          sleep 1
+
+          # Terza istanza: la stessa demo in una finestra non massimizzata
+          # (560×430), per verificare che testo e comandi restino leggibili.
+          mkdir -p smoke/nhome smoke/ndata smoke/ncache smoke/nruntime
+          chmod 700 smoke/nruntime
+          HOME="$PWD/smoke/nhome" XDG_RUNTIME_DIR="$PWD/smoke/nruntime" \
+            XDG_DATA_HOME="$PWD/smoke/ndata" XDG_CACHE_HOME="$PWD/smoke/ncache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_WINDOW=560x430 \
+            "$bin" > smoke/nout.log 2> smoke/nerr.log &
+          narrow=$!
+          sleep 8
+          if kill -0 "$narrow" 2>/dev/null; then
+            echo "== finestra 560x430: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== finestra 560x430: uscita da sola ==" >> smoke.log
+            tail -10 smoke/nerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/narrow.png 2> smoke/narrow.err
+          kill "$narrow" 2>/dev/null
+          sleep 1
+
+          # Quarta istanza: tema chiaro, per vedere che la tavolozza segua il
+          # desktop invece di essere solo scura.
+          mkdir -p smoke/lhome smoke/ldata smoke/lcache smoke/lruntime
+          chmod 700 smoke/lruntime
+          HOME="$PWD/smoke/lhome" XDG_RUNTIME_DIR="$PWD/smoke/lruntime" \
+            XDG_DATA_HOME="$PWD/smoke/ldata" XDG_CACHE_HOME="$PWD/smoke/lcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_THEME=light \
+            "$bin" > smoke/lout.log 2> smoke/lerr.log &
+          light=$!
+          sleep 8
+          if kill -0 "$light" 2>/dev/null; then
+            echo "== tema chiaro: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== tema chiaro: uscita da sola ==" >> smoke.log
+            tail -10 smoke/lerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/light.png 2> smoke/light.err
+          kill "$light" 2>/dev/null
+          sleep 1
+
+          # Quinta istanza: pannello di una videochiamata attiva, renderizzato
+          # dalla demo. Serve a controllare a occhio il layout della chiamata
+          # senza un account vero.
+          mkdir -p smoke/chome smoke/cdata smoke/ccache smoke/cruntime
+          chmod 700 smoke/cruntime
+          HOME="$PWD/smoke/chome" XDG_RUNTIME_DIR="$PWD/smoke/cruntime" \
+            XDG_DATA_HOME="$PWD/smoke/cdata" XDG_CACHE_HOME="$PWD/smoke/ccache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_CALL=video \
+            "$bin" > smoke/cout.log 2> smoke/cerr.log &
+          call=$!
+          sleep 8
+          if kill -0 "$call" 2>/dev/null; then
+            echo "== pannello chiamata: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== pannello chiamata: uscita da sola ==" >> smoke.log
+            tail -10 smoke/cerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/call.png 2> smoke/call.err
+          kill "$call" 2>/dev/null
+          sleep 1
+
+          # Settima istanza: la demo a metà dello storico, per controllare a
+          # occhio il pulsante "vai in fondo" e il conteggio dei messaggi.
+          mkdir -p smoke/jhome smoke/jdata smoke/jcache smoke/jruntime
+          chmod 700 smoke/jruntime
+          HOME="$PWD/smoke/jhome" XDG_RUNTIME_DIR="$PWD/smoke/jruntime" \
+            XDG_DATA_HOME="$PWD/smoke/jdata" XDG_CACHE_HOME="$PWD/smoke/jcache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_SCROLL=1 \
+            "$bin" > smoke/jout.log 2> smoke/jerr.log &
+          jump=$!
+          sleep 8
+          if kill -0 "$jump" 2>/dev/null; then
+            echo "== demo a metà storico: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== demo a metà storico: uscita da sola ==" >> smoke.log
+            tail -10 smoke/jerr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/jump.png 2> smoke/jump.err
+          kill "$jump" 2>/dev/null
+          sleep 1
+
+          # Sesta istanza: le impostazioni aperte, per controllare a occhio
+          # interruttori, pastiglie del tema e riepilogo del carattere.
+          mkdir -p smoke/shome smoke/sdata smoke/scache smoke/sruntime
+          chmod 700 smoke/sruntime
+          HOME="$PWD/smoke/shome" XDG_RUNTIME_DIR="$PWD/smoke/sruntime" \
+            XDG_DATA_HOME="$PWD/smoke/sdata" XDG_CACHE_HOME="$PWD/smoke/scache" \
+            DISPLAY=:99 WHATS_OPEN_DEMO=1 WHATS_OPEN_DEMO_SETTINGS=1 \
+            "$bin" > smoke/sout.log 2> smoke/serr.log &
+          settings=$!
+          sleep 8
+          if kill -0 "$settings" 2>/dev/null; then
+            echo "== impostazioni: ancora viva dopo 8 s ==" >> smoke.log
+          else
+            echo "== impostazioni: uscita da sola ==" >> smoke.log
+            tail -10 smoke/serr.log >> smoke.log
+          fi
+          import -display :99 -window root smoke/settings.png 2> smoke/settings.err
+          kill "$settings" 2>/dev/null
+
+          # Un commento per immagine: GitHub tronca i commenti a 64 KB, e con
+          # sei immagini nello stesso testo resterebbero miniature illeggibili.
+          post_image () {
+            tag="$1"
+            png="$2"
+            [ -s "$png" ] || return 0
+            for width in 1000 820 680 560; do
+              convert "$png" -resize "${width}x" -quality 60 smoke/out.jpg 2>/dev/null \
+                || magick "$png" -resize "${width}x" -quality 60 smoke/out.jpg 2>/dev/null
+              [ -s smoke/out.jpg ] && [ "$(wc -c < smoke/out.jpg)" -lt 43000 ] && break
+            done
+            [ -s smoke/out.jpg ] || return 0
+            echo "$tag: $(wc -c < smoke/out.jpg) byte ($width px)" >> smoke.log
+            {
+              echo "$tag"
+              echo
+              echo '```'
+              base64 -w0 smoke/out.jpg
+              echo
+              echo '```'
+            } > "smoke/$tag.md"
+            jq -Rs '{body: .}' "smoke/$tag.md" > "smoke/$tag.json"
+            gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+              --input "smoke/$tag.json" > /dev/null 2>&1 || true
+          }
+          post_image SCREENSHOT_B64 smoke/shot.png
+          post_image DEMO_B64 smoke/demo.png
+          post_image NARROW_B64 smoke/narrow.png
+          post_image SETTINGS_B64 smoke/settings.png
+          post_image LIGHT_B64 smoke/light.png
+          post_image CALL_B64 smoke/call.png
+          post_image JUMP_B64 smoke/jump.png
+
+          cat smoke.log
+          grep -q "Whats-Open 0.1.0" smoke.log || echo "::error::il binario non si avvia"
+          grep -qi "panicked" smoke.log && echo "::error::panic all'avvio"
+          video_failed=0
+          if [ "${video_ok:-0}" != "1" ]; then
+            echo "::error::--video-check non è passato: il percorso video delle chiamate è rotto"
+            video_failed=1
+          fi
+          if [ "${audio_ok:-0}" != "1" ]; then
+            echo "::error::--audio-check non è passato: microfono, casse o silenzio di riserva non funzionano"
+            video_failed=1
+          fi
+          grep -E "^FAIL" smoke.log | head -10 | while IFS= read -r line; do
+            echo "::error::collaudo $line"
+          done
+          if [ "${selftest_ok:-0}" != "1" ]; then
+            echo "::error::--selftest non è passato: una funzione interna è rotta (vedi la riga FAIL)"
+            video_failed=1
+          fi
+          {
+            echo "collaudo del binario"
+            echo
+            echo '```'
+            tail -c 20000 smoke.log
+            echo '```'
+          } > comment.md
+          jq -Rs '{body: .}' comment.md > smoke.json
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            --input smoke.json > /dev/null 2>&1 || true
+          exit "$video_failed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-screenshots
+          path: |
+            smoke/shot.png
+            smoke/demo.png
+            smoke/narrow.png
+            smoke/light.png
+            smoke/call.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whats-open-linux
+          path: whats-open-linux-*.tar.gz
+          if-no-files-found: error
+
+  # Pubblica gli archivi quando si crea un tag (es. `git tag v0.1.0 && git push --tags`).
+  release:
+    name: release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: whats-open-linux
+
+      - name: Pubblica la release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" whats-open-linux-*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" whats-open-linux-*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Whats-Open $tag" \
+              --generate-notes
+          fi

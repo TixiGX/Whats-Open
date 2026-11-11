@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Whats-Open
+GenericName=Client WhatsApp
+Comment=Client WhatsApp nativo, minimale e monocromatico
+Exec=whats-open
+Icon=whats-open
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=WhatsApp;chat;messaggi;
+StartupWMClass=whats-open

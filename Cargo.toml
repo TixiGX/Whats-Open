@@ -1,0 +1,78 @@
+[package]
+name = "whats-open"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+description = "Whats Open — un client WhatsApp nativo, minimale e monocromatico per Linux"
+license = "MIT"
+repository = "https://github.com/TixiGX/Whats-Open"
+default-run = "whats-open"
+
+[dependencies]
+libc = "0.2"
+anyhow = "1"
+# Solo per l'ora locale: la libreria del protocollo porta già chrono.
+chrono = { version = "0.4", features = ["clock"] }
+cpal = "0.18"
+eframe = { version = "0.36.2", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+egui = "0.36.2"
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+] }
+log = "0.4"
+qrcode = { version = "0.14", default-features = false }
+# Portal XDG (GNOME, KDE, wlroots) con ripiego su zenity.
+rfd = "0.17"
+# Stessa versione di libsqlite3-sys usata da whatsapp-rust (0.37): due copie
+# dello stesso `links = "sqlite3"` non possono convivere nel grafo.
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "fs",
+    "process",
+] }
+# Protocollo WhatsApp (Signal, Noise, media E2E, storico). Una sola dipendenza:
+# la libreria ri-esporta i propri crate interni.
+whatsapp-rust = { version = "=0.7.0", default-features = false, features = [
+    "sqlite-storage",
+    "tokio-transport",
+    "tokio-runtime",
+    "ureq-client",
+    "tokio-native",
+    # Chiamate vocali 1:1. `voip-mlow` è il codec MLow di WhatsApp riscritto
+    # interamente in Rust: nessuna libreria C, nessun ffmpeg, e il binario
+    # resta statico anche su musl. Il video delle videochiamate resta fuori
+    # scope (servirebbe un encoder H.264): le videochiamate si rispondono in
+    # sola audio, come fa WhatsApp quando la fotocamera non è disponibile.
+    "voip-mlow",
+] }
+
+# Profilo pensato per compilare anche su portatili con 4-8 GB di RAM:
+# niente LTO e più unità di compilazione. Con `lto = "thin"` e
+# `codegen-units = 1` il crate `waproto` (protobuf generato, ~7 MB di
+# sorgente) arriva a chiedere diversi GB e su molte macchine il kernel lo
+# uccide con SIGKILL. Il binario cresce di qualche MB, ma la compilazione
+# riesce ovunque.
+[profile.release]
+# `s` invece di `3`: il client passa quasi tutto il tempo fermo, quindi si
+# privilegia la dimensione del binario (circa il 15% in meno) senza perdere
+# nulla di percepibile. LTO resta spento di proposito.
+opt-level = "s"
+codegen-units = 16
+lto = false
+strip = true

@@ -1,0 +1,625 @@
+//! Piccole utilità condivise: percorsi XDG, orari, formattazione, log su file.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
+
+/// Percorsi dell'applicazione, secondo la XDG Base Directory Specification.
+#[derive(Clone, Debug)]
+pub struct Paths {
+    pub data: PathBuf,
+    pub cache: PathBuf,
+    /// Messaggi e chat (schema nostro).
+    pub db: PathBuf,
+    /// Credenziali e chiavi della sessione (schema della libreria).
+    pub session: PathBuf,
+    pub media: PathBuf,
+}
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+impl Paths {
+    pub fn resolve() -> Self {
+        let base_data = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".local").join("share"));
+        let base_cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".cache"));
+
+        let data = base_data.join("whats-open");
+        let cache = base_cache.join("whats-open");
+        let media = cache.join("media");
+        let db = data.join("messages.db");
+        let session = data.join("session.db");
+
+        Self {
+            data,
+            cache,
+            db,
+            session,
+            media,
+        }
+    }
+
+    pub fn ensure(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.data)?;
+        std::fs::create_dir_all(&self.cache)?;
+        std::fs::create_dir_all(&self.media)?;
+        Ok(())
+    }
+
+    pub fn log_file(&self) -> PathBuf {
+        self.cache.join("whats-open.log")
+    }
+
+    /// File in cache per un allegato già scaricato.
+    pub fn cached_media(&self, chat: &str, message_id: &str, ext: &str) -> PathBuf {
+        let safe_chat: String = chat
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let safe_id: String = message_id
+            .chars()
+            .map(|c| {
+                // Il punto non entra: `..` nel nome di un file è una via di fuga.
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let dir = self.media.join(safe_chat);
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join(format!("{safe_id}.{ext}"))
+    }
+}
+
+pub fn now_ts() -> i64 {
+    Local::now().timestamp()
+}
+
+pub fn fmt_clock(ts: i64) -> String {
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0) {
+        Some(dt) => {
+            let local = dt.with_timezone(&Local);
+            format!("{:02}:{:02}", local.hour(), local.minute())
+        }
+        None => String::new(),
+    }
+}
+
+pub fn fmt_chat_time(ts: i64) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0) else {
+        return String::new();
+    };
+    let local = dt.with_timezone(&Local);
+    let today = Local::now().date_naive();
+    let day = local.date_naive();
+
+    if day == today {
+        fmt_clock(ts)
+    } else if Some(day) == today.pred_opt() {
+        "ieri".to_string()
+    } else if (today - day).num_days() < 7 {
+        match local.weekday() {
+            Weekday::Mon => "lun",
+            Weekday::Tue => "mar",
+            Weekday::Wed => "mer",
+            Weekday::Thu => "gio",
+            Weekday::Fri => "ven",
+            Weekday::Sat => "sab",
+            Weekday::Sun => "dom",
+        }
+        .to_string()
+    } else if day.year() == today.year() {
+        format!("{:02}/{:02}", local.day(), local.month())
+    } else {
+        format!("{:02}/{:02}/{:02}", local.day(), local.month(), local.year() % 100)
+    }
+}
+
+pub fn fmt_long_time(ts: i64) -> String {
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0) {
+        Some(dt) => {
+            let local = dt.with_timezone(&Local);
+            format!(
+                "{:02}/{:02}/{:04} {:02}:{:02}",
+                local.day(),
+                local.month(),
+                local.year(),
+                local.hour(),
+                local.minute()
+            )
+        }
+        None => String::new(),
+    }
+}
+
+pub fn human_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB).replace('.', ",")
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB).replace('.', ",")
+    } else if b >= KB {
+        format!("{:.0} KB", b / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+pub fn human_duration(seconds: u32) -> String {
+    let m = seconds / 60;
+    let s = seconds % 60;
+    if m >= 60 {
+        format!("{}:{:02}:{:02}", m / 60, m % 60, s)
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// Nome leggibile del contatto a partire dal JID.
+pub fn jid_user(jid: &str) -> String {
+    jid.split('@').next().unwrap_or(jid).split(':').next().unwrap_or(jid).to_string()
+}
+
+pub fn jid_is_group(jid: &str) -> bool {
+    jid.ends_with("@g.us")
+}
+
+pub fn jid_is_newsletter(jid: &str) -> bool {
+    jid.ends_with("@newsletter")
+}
+
+pub fn jid_is_status(jid: &str) -> bool {
+    jid.starts_with("status@")
+}
+
+/// Numero di telefono presentabile (senza spazi, il numero è già E.164).
+pub fn phone_display(user: &str) -> String {
+    if !user.is_empty() && user.chars().all(|c| c.is_ascii_digit()) {
+        format!("+{user}")
+    } else {
+        user.to_string()
+    }
+}
+
+/// Vero se il testo è solo un numero di telefono (con eventuale prefisso,
+/// spazi o trattini): serve a non salvare un numero come nome del contatto.
+/// Riduce un numero alla forma confrontabile: solo cifre, senza prefisso
+/// internazionale quando non serve. `+39 333 123 4567` → `3331234567` non è
+/// possibile senza sapere il Paese, quindi si tengono le ultime 9-10 cifre.
+pub fn phone_key(number: &str) -> String {
+    let digits: String = number.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if digits.len() > 10 {
+        digits[digits.len() - 10..].to_string()
+    } else {
+        digits
+    }
+}
+
+/// Voce di una rubrica esportata in vCard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VCardEntry {
+    pub name: String,
+    pub phones: Vec<String>,
+}
+
+/// Parser vCard essenziale ma tollerante: piega le righe spezzate, legge FN e
+/// N, raccoglie tutti i TEL. Non serve altro per riportare i nomi nelle chat.
+pub fn parse_vcards(text: &str) -> Vec<VCardEntry> {
+    let mut entries = Vec::new();
+    let mut name = String::new();
+    let mut first = String::new();
+    let mut last = String::new();
+    let mut phones: Vec<String> = Vec::new();
+    let mut inside = false;
+
+    let mut lines: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(last_line) = lines.last_mut() {
+                last_line.push_str(line.trim_start());
+                continue;
+            }
+        }
+        lines.push(line.to_string());
+    }
+
+    for line in lines {
+        let upper = line.to_ascii_uppercase();
+        if upper.starts_with("BEGIN:VCARD") {
+            inside = true;
+            name.clear();
+            first.clear();
+            last.clear();
+            phones.clear();
+            continue;
+        }
+        if upper.starts_with("END:VCARD") {
+            if inside {
+                let chosen = if !name.trim().is_empty() {
+                    name.trim().to_string()
+                } else {
+                    format!("{} {}", first.trim(), last.trim())
+                        .trim()
+                        .to_string()
+                };
+                if !chosen.is_empty() && !phones.is_empty() {
+                    entries.push(VCardEntry {
+                        name: chosen,
+                        phones: phones.clone(),
+                    });
+                }
+            }
+            inside = false;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key_upper = key.to_ascii_uppercase();
+        // `item1.TEL` e `TEL;TYPE=CELL` finiscono nello stesso posto.
+        let field = key_upper
+            .rsplit('.')
+            .next()
+            .unwrap_or(&key_upper)
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let value = unescape_vcard(value);
+        match field.as_str() {
+            "FN" => name = value,
+            "TEL" => {
+                if !value.trim().is_empty() {
+                    phones.push(value);
+                }
+            }
+            "N" => {
+                let mut parts = value.split(';');
+                last = parts.next().unwrap_or("").to_string();
+                first = parts.next().unwrap_or("").to_string();
+            }
+            _ => {}
+        }
+    }
+    entries
+}
+
+fn unescape_vcard(value: &str) -> String {
+    value
+        .replace("\\n", " ")
+        .replace("\\,", ",")
+        .replace("\\;", ";")
+        .replace("\\\\", "\\")
+}
+
+pub fn looks_like_phone(text: &str) -> bool {
+    let trimmed = text.trim();
+    let mut digits = 0usize;
+    for ch in trimmed.chars() {
+        match ch {
+            '0'..='9' => digits += 1,
+            '+' | ' ' | '-' | '(' | ')' | '.' => {}
+            _ => return false,
+        }
+    }
+    digits >= 6
+}
+
+/// Nome da mostrare: nome salvato, push name, oppure numero/ID.
+pub fn display_name(name: &str, jid: &str) -> String {
+    if !name.trim().is_empty() {
+        return name.trim().to_string();
+    }
+    // Un LID è un indirizzo interno di WhatsApp, non un numero di telefono:
+    // mostrarlo come "+1234…" farebbe credere di conoscere il numero. Stessa
+    // cosa per un gruppo senza oggetto, che non è un contatto.
+    if jid_is_group(jid) {
+        return "Gruppo".to_string();
+    }
+    if jid.ends_with("@lid") {
+        return "Contatto".to_string();
+    }
+    let user = jid_user(jid);
+    if user.chars().all(|c| c.is_ascii_digit()) && !user.is_empty() {
+        phone_display(&user)
+    } else {
+        "Contatto".to_string()
+    }
+}
+
+pub fn initials(name: &str) -> String {
+    let mut out = String::new();
+    for word in name.split_whitespace() {
+        if let Some(ch) = word.chars().next() {
+            if out.chars().count() < 2 {
+                out.extend(ch.to_uppercase());
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push('?');
+    }
+    out
+}
+
+/// Manda a capo le parole chilometriche (URL, basi64, nomi di file): epaint
+/// non spezza una parola che non entra e il fumetto uscirebbe dal bordo.
+/// Il testo è solo quello disegnato: il messaggio salvato resta intatto.
+pub fn wrap_long_tokens(text: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
+    if max_chars < 8
+        || (text.chars().all(|c| !c.is_whitespace()) && text.chars().count() <= max_chars)
+    {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + text.len() / max_chars);
+    let mut run = 0usize;
+    let mut changed = false;
+    for ch in text.chars() {
+        if ch == '\n' {
+            run = 0;
+            out.push(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            run = 0;
+            out.push(ch);
+            continue;
+        }
+        if run == max_chars {
+            out.push('\n');
+            run = 0;
+            changed = true;
+        }
+        out.push(ch);
+        run += 1;
+    }
+    if changed {
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+pub fn truncate(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+pub fn open_external(path: &Path) {
+    crate::platform::open_external(path);
+}
+
+/// Come [`open_external`], ma dice se un programma è partito davvero.
+pub fn open_external_checked(path: &Path) -> bool {
+    crate::platform::open_external(path)
+}
+
+/// Id di messaggio nel formato di WhatsApp: 16 caratteri esadecimali
+/// maiuscoli. Lo scegliamo noi così l'eco del server porta lo stesso id della
+/// bolla già a schermo (niente duplicati, niente rinominazioni).
+pub fn new_message_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut value = nanos
+        ^ ((std::process::id() as u64) << 40)
+        ^ COUNTER.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    value ^= value >> 33;
+    value = value.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    value ^= value >> 33;
+    format!("{value:016X}")
+}
+
+pub fn timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+// --------------------------------------------------------------------------
+// Log minimale su file (niente crate extra): utile per capire un guasto.
+// --------------------------------------------------------------------------
+
+struct FileLogger {
+    file: Mutex<Option<std::fs::File>>,
+}
+
+impl log::Log for FileLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let line = format!(
+            "{} [{:<5}] {}\n",
+            Local::now().format("%Y-%m-%d %H:%M:%S"),
+            record.level(),
+            record.args()
+        );
+        eprintln!("{}", line.trim_end());
+        if let Ok(mut guard) = self.file.lock() {
+            if let Some(file) = guard.as_mut() {
+                let _ = file.write_all(line.as_bytes());
+                let _ = file.flush();
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+pub fn init_logging(path: &Path) {
+    // Un log che cresce senza fine prima o poi riempie la home: sopra i 4 MB
+    // riparte da zero, tenendo da parte il file precedente.
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > 4 * 1024 * 1024 {
+            let _ = std::fs::rename(path, path.with_extension("old.log"));
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok();
+    let logger = FileLogger {
+        file: Mutex::new(file),
+    };
+    let _ = log::set_boxed_logger(Box::new(logger));
+    log::set_max_level(log::LevelFilter::Info);
+}
+
+#[allow(dead_code)]
+fn _assert_local_tz() -> Option<chrono::DateTime<Local>> {
+    Local.timestamp_opt(0, 0).single()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn gli_id_dei_messaggi_sono_esadecimali_e_unici() {
+        let first = super::new_message_id();
+        let second = super::new_message_id();
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn un_numero_non_e_un_nome() {
+        assert!(super::looks_like_phone("+39 333 123 4567"));
+        assert!(super::looks_like_phone("393331234567"));
+        assert!(!super::looks_like_phone("Mamma"));
+        assert!(!super::looks_like_phone(""));
+    }
+
+    use super::*;
+
+    #[test]
+    fn jid_e_nomi_leggibili() {
+        assert_eq!(jid_user("393331234567@s.whatsapp.net"), "393331234567");
+        assert_eq!(jid_user("393331234567:12@s.whatsapp.net"), "393331234567");
+        assert_eq!(phone_display("393331234567"), "+393331234567");
+        assert!(jid_is_group("120363000000000000@g.us"));
+        assert!(!jid_is_group("393331234567@s.whatsapp.net"));
+        assert!(jid_is_status("status@broadcast"));
+        assert!(jid_is_newsletter("123@newsletter"));
+    }
+
+    #[test]
+    fn nomi_da_mostrare() {
+        assert_eq!(
+            display_name("Anna", "393331234567@s.whatsapp.net"),
+            "Anna"
+        );
+        assert_eq!(
+            display_name("", "393331234567@s.whatsapp.net"),
+            "+393331234567"
+        );
+        // Un LID e un gruppo senza nome non sono numeri di telefono.
+        assert_eq!(display_name("", "1234567890@lid"), "Contatto");
+        assert_eq!(display_name("", "120363000000000000@g.us"), "Gruppo");
+        assert_eq!(initials("Maria Rossi"), "MR");
+        assert_eq!(initials(""), "?");
+    }
+
+    #[test]
+    fn la_rubrica_vcard_diventa_nomi() {
+        let text = "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Anna Ferrari\r\n\
+                    TEL;TYPE=CELL:+39 333 111 2222\r\nEND:VCARD\r\n\
+                    BEGIN:VCARD\r\nN:Rossi;Luca;;;\r\n\
+                    item1.TEL:3401234567\r\nEND:VCARD\r\n";
+        let entries = parse_vcards(text);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "Anna Ferrari");
+        assert_eq!(entries[0].phones, vec!["+39 333 111 2222"]);
+        assert_eq!(entries[1].name, "Luca Rossi");
+        assert_eq!(phone_key(&entries[0].phones[0]), "3331112222");
+        assert_eq!(phone_key("+39 333 111 2222"), phone_key("3331112222"));
+    }
+
+    #[test]
+    fn troncamento_rispetta_i_caratteri() {
+        assert_eq!(truncate("ciao", 10), "ciao");
+        let cut = truncate("perché è così", 6);
+        assert_eq!(cut.chars().count(), 6);
+        assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn misure_e_durate() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(2048), "2 KB");
+        assert_eq!(human_duration(5), "0:05");
+        assert_eq!(human_duration(65), "1:05");
+        assert_eq!(human_duration(3725), "1:02:05");
+    }
+
+    #[test]
+    fn le_parole_lunghissime_si_spezzano() {
+        let url = "https://example.com/una/lista/molto/lunga/di/parole/senza/spazi";
+        let wrapped = wrap_long_tokens(url, 20);
+        assert!(wrapped.lines().count() > 1);
+        // Nessun carattere perso: si è solo inserito un a capo.
+        assert_eq!(wrapped.replace('\n', ""), url);
+        // Un messaggio normale resta intatto e non viene ricopiato.
+        let text = "Ciao, come va?";
+        assert!(matches!(wrap_long_tokens(text, 34), std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn percorsi_nella_cache_sono_sicuri() {
+        let paths = Paths {
+            data: PathBuf::from("/tmp/d"),
+            cache: PathBuf::from("/tmp/c"),
+            db: PathBuf::from("/tmp/d/messages.db"),
+            session: PathBuf::from("/tmp/d/session.db"),
+            media: PathBuf::from("/tmp/c/media"),
+        };
+        let path = paths.cached_media("39333@s.whatsapp.net", "../etc/passwd", "ogg");
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains('/'));
+        assert!(!name.contains(".."));
+        assert!(path.starts_with("/tmp/c/media"));
+    }
+}
