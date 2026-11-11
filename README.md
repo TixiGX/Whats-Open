@@ -57,7 +57,7 @@ non una copia di WhatsApp Web.
 - **Un binario solo**: 16,2 MB statico (musl) o 15,8 MB (glibc), senza WebView
   né toolkit grafici al seguito. Il pacchetto completo, con icone, file
   `.desktop` e installer, è 31 MB.
-- **Fermo**: 20–30 ms di CPU ogni 4 secondi (circa lo 0,5% di un core) e
+- **Fermo**: 20–40 ms di CPU ogni 4 secondi (circa lo 0,5–1% di un core) e
   ~120 MB residenti nel collaudo su Xvfb, dove il disegno passa dal
   rasterizzatore software; con una GPU vera la memoria scende.
 - **Niente ridisegni a vuoto**: la finestra si ridisegna sugli eventi, con un
