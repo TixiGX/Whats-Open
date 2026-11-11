@@ -17,7 +17,10 @@ impl Default for Textures {
         Self {
             map: HashMap::new(),
             order: Vec::new(),
-            limit: 220,
+            // Ogni miniatura è una texture RGBA (una foto 480×270 sono circa
+            // mezzo megabyte): con un tetto basso la memoria resta piatta
+            // anche scorrendo centinaia di foto.
+            limit: 72,
         }
     }
 }

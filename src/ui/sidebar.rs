@@ -10,7 +10,7 @@ use super::{gfx, widgets, App};
 
 impl App {
     pub fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
+        ui.add_space(14.0);
 
         let mut open_new = false;
         let mut open_settings = false;
@@ -46,14 +46,14 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(12.0);
                 if crate::icons::Icon::Gear
-                    .button(ui, 30.0, pal().muted)
+                    .button(ui, 32.0, pal().muted)
                     .on_hover_text("Impostazioni")
                     .clicked()
                 {
                     open_settings = true;
                 }
                 if crate::icons::Icon::Plus
-                    .button(ui, 30.0, pal().muted)
+                    .button(ui, 32.0, pal().muted)
                     .on_hover_text("Nuova chat")
                     .clicked()
                 {
@@ -139,8 +139,13 @@ impl App {
             }
         });
         ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(2.0);
+        let line = ui.available_rect_before_wrap();
+        ui.painter().hline(
+            (line.left() + 12.0)..=(line.right() - 12.0),
+            line.top(),
+            egui::Stroke::new(1.0, pal().border),
+        );
+        ui.add_space(8.0);
 
         let query = self.search.trim().to_lowercase();
         let mut chosen: Option<String> = None;

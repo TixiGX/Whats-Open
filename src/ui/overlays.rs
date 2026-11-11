@@ -1111,7 +1111,7 @@ impl App {
                     format!("{detail}\nnessun file di sistema trovato")
                 } else {
                     format!(
-                        "{detail}\nfile: {}\nscelta da: {}\nspaziatura: {}\nriserve caricate: {}",
+                        "{detail}\nfile: {}\nscelta da: {}\nspaziatura: {}\nriserve caricate: {}\nemoji: {}",
                         info.file,
                         if info.source.is_empty() {
                             "nessuna (incorporato)"
@@ -1123,7 +1123,12 @@ impl App {
                         } else {
                             info.mono.as_str()
                         },
-                        info.fallbacks
+                        info.fallbacks,
+                        if info.builtin_emoji {
+                            "incorporate nel programma"
+                        } else {
+                            "dal sistema"
+                        }
                     )
                 };
                 ui.label(RichText::new(detail).size(10.5).color(pal().muted))

@@ -370,6 +370,44 @@ pub fn initials(name: &str) -> String {
     out
 }
 
+/// Manda a capo le parole chilometriche (URL, basi64, nomi di file): epaint
+/// non spezza una parola che non entra e il fumetto uscirebbe dal bordo.
+/// Il testo è solo quello disegnato: il messaggio salvato resta intatto.
+pub fn wrap_long_tokens(text: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
+    if max_chars < 8
+        || (text.chars().all(|c| !c.is_whitespace()) && text.chars().count() <= max_chars)
+    {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + text.len() / max_chars);
+    let mut run = 0usize;
+    let mut changed = false;
+    for ch in text.chars() {
+        if ch == '\n' {
+            run = 0;
+            out.push(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            run = 0;
+            out.push(ch);
+            continue;
+        }
+        if run == max_chars {
+            out.push('\n');
+            run = 0;
+            changed = true;
+        }
+        out.push(ch);
+        run += 1;
+    }
+    if changed {
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 pub fn truncate(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
@@ -555,6 +593,18 @@ mod tests {
         assert_eq!(human_duration(5), "0:05");
         assert_eq!(human_duration(65), "1:05");
         assert_eq!(human_duration(3725), "1:02:05");
+    }
+
+    #[test]
+    fn le_parole_lunghissime_si_spezzano() {
+        let url = "https://example.com/una/lista/molto/lunga/di/parole/senza/spazi";
+        let wrapped = wrap_long_tokens(url, 20);
+        assert!(wrapped.lines().count() > 1);
+        // Nessun carattere perso: si è solo inserito un a capo.
+        assert_eq!(wrapped.replace('\n', ""), url);
+        // Un messaggio normale resta intatto e non viene ricopiato.
+        let text = "Ciao, come va?";
+        assert!(matches!(wrap_long_tokens(text, 34), std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]

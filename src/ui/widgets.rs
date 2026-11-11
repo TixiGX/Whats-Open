@@ -253,6 +253,18 @@ pub fn chip(ui: &mut Ui, text: &str, selected: bool) -> Response {
     )
 }
 
+/// Scheda arrotondata: è la forma base dell'interfaccia, come i pannelli
+/// flottanti dei programmi di GNOME. Il contenuto resta del chiamante, così la
+/// scheda non impone margini e ogni schermata sceglie i suoi.
+pub fn card<R>(ui: &mut Ui, fill: egui::Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, pal().border))
+        .corner_radius(egui::CornerRadius::same(16))
+        .show(ui, add)
+        .inner
+}
+
 /// Etichetta di data fra i messaggi.
 pub fn day_separator(ui: &mut Ui, label: &str) {
     ui.add_space(10.0);

@@ -134,6 +134,12 @@ impl App {
 
         egui::Frame::new()
             .fill(pal().panel)
+            .corner_radius(egui::CornerRadius {
+                nw: 15,
+                ne: 15,
+                sw: 0,
+                se: 0,
+            })
             .inner_margin(egui::Margin::symmetric(14, 9))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -238,7 +244,14 @@ impl App {
                     });
                 });
             });
-        ui.separator();
+        // Una linea appena visibile, rientrata: separa senza il taglio netto
+        // del separatore a tutta larghezza.
+        let line = ui.available_rect_before_wrap();
+        ui.painter().hline(
+            (line.left() + 14.0)..=(line.right() - 14.0),
+            line.top(),
+            egui::Stroke::new(1.0, crate::theme::mix(pal().panel, pal().border, 0.55)),
+        );
 
         if let Some(video) = place_call {
             if chat.is_group {
@@ -251,16 +264,62 @@ impl App {
 
     fn messages_ui(&mut self, ui: &mut egui::Ui) {
         let height = (ui.available_height() - 86.0).max(120.0);
-        let mut area = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .max_height(height)
-            .stick_to_bottom(true);
+
+        // La rotella la gestiamo noi: la conversazione scorre con una breve
+        // inerzia (circa un decimo di secondo) invece che a salti secchi di un
+        // dentello alla volta. Il movimento è in pixel di contenuto: positivo
+        // vuol dire "vai più giù".
         if self.scroll_bottom {
-            area = area.stick_to_bottom(true);
+            self.follow_bottom = true;
+            self.scroll_pending = 0.0;
+        }
+        let hovered = self
+            .scroll_rect
+            .map(|rect| {
+                ui.ctx()
+                    .pointer_hover_pos()
+                    .map(|pos| rect.contains(pos))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if hovered {
+            let wheel = ui.input(|input| input.raw_scroll_delta.y);
+            if wheel != 0.0 {
+                // Rotella in alto (positivo) = torna indietro nello storico.
+                self.scroll_pending -= wheel;
+                if self.scroll_pending < 0.0 {
+                    self.follow_bottom = false;
+                }
+            }
+        }
+        let mut step = 0.0;
+        if self.scroll_pending.abs() > 0.5 {
+            step = self.scroll_pending * 0.30;
+            self.scroll_pending -= step;
+            // Un fondo scala evita di trascinare un residuo per decine di
+            // fotogrammi quando si dà una raffica di rotella.
+            self.scroll_pending = self.scroll_pending.clamp(-2400.0, 2400.0);
+        } else {
+            self.scroll_pending = 0.0;
+        }
+        if step != 0.0 {
+            ui.ctx().request_repaint();
         }
 
-        area.show(ui, |ui| {
+        let area = egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height(height)
+            .stick_to_bottom(self.follow_bottom)
+            .scroll_source(egui::scroll_area::ScrollSource {
+                mouse_wheel: false,
+                ..Default::default()
+            });
+
+        let output = area.show(ui, |ui| {
             ui.set_width(ui.available_width());
+            if step != 0.0 {
+                ui.scroll_with_delta(Vec2::new(0.0, -step));
+            }
             ui.add_space(6.0);
             let mut last_day = String::new();
             let count = self.messages.len();
@@ -288,7 +347,56 @@ impl App {
             }
             ui.add_space(8.0);
         });
+
+        let max = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        let at_bottom = output.state.offset.y >= max - 4.0;
+        if at_bottom {
+            // Arrivato in fondo: da qui in poi si segue di nuovo la chat.
+            self.follow_bottom = true;
+        }
+        self.scroll_rect = Some(output.inner_rect);
+        self.scroll_below = !at_bottom && max > 0.0;
+        if self.scroll_below {
+            self.jump_button(ui, output.inner_rect);
+            // La chat non è a fondo: se resta ferma, la vista resta com'è.
+            self.follow_bottom = false;
+        }
         self.scroll_bottom = false;
+    }
+
+    /// Pastiglia circolare in basso a destra: riporta al fondo della chat.
+    fn jump_button(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let size = 42.0;
+        let center = egui::Pos2::new(area.right() - size * 0.5 - 14.0, area.bottom() - size * 0.5 - 10.0);
+        let rect = egui::Rect::from_center_size(center, Vec2::splat(size));
+        let response = ui.interact(rect, ui.id().with("jump-bottom"), Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let lift = if response.hovered() { 1.0 } else { 0.0 };
+        let rect = rect.translate(Vec2::new(0.0, -lift));
+        // Ombra morbida: due dischi sempre più larghi e trasparenti.
+        ui.painter().circle_filled(
+            rect.center(),
+            size * 0.5 + 3.0,
+            Color32::from_black_alpha(28),
+        );
+        ui.painter()
+            .circle_filled(rect.center(), size * 0.5, pal().panel);
+        ui.painter().circle_stroke(
+            rect.center(),
+            size * 0.5,
+            egui::Stroke::new(1.0, pal().border),
+        );
+        let icon = egui::Rect::from_center_size(rect.center(), Vec2::splat(18.0));
+        crate::icons::Icon::ChevronDown.paint(ui, icon, pal().text);
+        if response.clicked() {
+            self.follow_bottom = true;
+            self.scroll_pending = 0.0;
+            self.scroll_bottom = true;
+            ui.ctx().request_repaint();
+        }
+        response.on_hover_text("Vai ai messaggi più recenti");
     }
 
     fn bubble_ui(&mut self, ui: &mut egui::Ui, index: usize, tight: bool) {
@@ -301,7 +409,7 @@ impl App {
         let bubble = Bubble::from(&self.messages[index]);
         // Larghezza giusta: le righe non corrono da un bordo all'altro, ma i
         // messaggi brevi restano stretti invece di allargarsi a vuoto.
-        let max_width = (ui.available_width() * 0.72).clamp(200.0, 520.0);
+        let max_width = (ui.available_width() * 0.78).clamp(210.0, 560.0);
 
         let layout = if bubble.own {
             egui::Layout::right_to_left(egui::Align::Max)
@@ -341,7 +449,12 @@ impl App {
         }
         if !text.is_empty() {
             let size = if bubble.kind == Kind::Text { 14.0 } else { 13.5 };
-            width = width.max(measure_text(ui, text, size, room));
+            let measured = if bubble.kind == Kind::Text {
+                util::wrap_long_tokens(text, 34).into_owned()
+            } else {
+                text.to_string()
+            };
+            width = width.max(measure_text(ui, &measured, size, room));
         }
         match bubble.kind {
             Kind::Image | Kind::Video | Kind::Gif => {
@@ -652,8 +765,11 @@ impl App {
                 } else if bubble.view_once && bubble.played && bubble.text.is_empty() {
                     self.once_seen_label(ui, Kind::Text, muted);
                 } else if !bubble.text.is_empty() {
+                    // Le parole lunghissime (un URL, un base64) si spezzano:
+                    // altrimenti il fumetto esce dalla finestra.
+                    let shown = util::wrap_long_tokens(&bubble.text, 34);
                     ui.label(
-                        RichText::new(&bubble.text)
+                        RichText::new(shown.as_ref())
                             .size(14.0)
                             .color(text_color),
                     );
@@ -1047,9 +1163,14 @@ impl App {
         {
             self.send_text();
         }
-        ui.separator();
         egui::Frame::new()
             .fill(pal().panel)
+            .corner_radius(egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 15,
+                se: 15,
+            })
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 if self.reply.is_some() {

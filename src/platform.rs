@@ -192,6 +192,24 @@ pub fn report(paths: &crate::util::Paths) -> String {
         "font di riserva  : {fallbacks} file (su {} visti)\n",
         plan.scanned
     ));
+    let emoji_builtin = loaded
+        .as_ref()
+        .map(|info| info.builtin_emoji)
+        .unwrap_or_else(|| {
+            // Senza finestra aperta vale la stessa regola del caricamento.
+            !plan
+                .fallback
+                .iter()
+                .any(|face| face.file.to_ascii_lowercase().contains("emoji"))
+        });
+    out.push_str(&format!(
+        "emoji e simboli  : {}\n",
+        if emoji_builtin {
+            "incorporate nel programma (il sistema non ne ha di disegnabili)"
+        } else {
+            "dal sistema"
+        }
+    ));
 
     let mut advice: Vec<String> = Vec::new();
     if !has_ffmpeg {
@@ -325,7 +343,11 @@ pub struct FontFace {
 /// collezioni CJK enormi la memoria non esplode.
 const FONT_UI_BUDGET: usize = 12 * 1024 * 1024;
 const FONT_MONO_BUDGET: usize = 6 * 1024 * 1024;
-const FONT_FALLBACK_BUDGET: usize = 20 * 1024 * 1024;
+/// Le riserve servono per emoji, simboli e alfabeti non latini. Con 10 MB ci
+/// stanno tutti i blocchi utili; le collezioni CJK, che da sole ne pesano
+/// venti, entrano solo se resta spazio — meglio poca memoria che un carattere
+/// in più mai usato.
+const FONT_FALLBACK_BUDGET: usize = 10 * 1024 * 1024;
 
 /// Il piano dei font: quello dell'interfaccia, quello a spaziatura fissa e le
 /// riserve per emoji e scritture non latine.
@@ -615,6 +637,14 @@ fn pick_any(files: &[PathBuf]) -> Option<PathBuf> {
         .cloned()
 }
 
+/// I font emoji a colori (CBDT/CBLC) non hanno contorni: qui non si possono
+/// disegnare e occuperebbero memoria per niente. Vengono saltati; le emoji le
+/// forniscono i caratteri incorporati nel binario.
+fn is_color_emoji(path: &Path) -> bool {
+    let name = file_name(path).to_ascii_lowercase();
+    name.contains("coloremoji") || name.contains("color-emoji") || name.contains("emoji-color")
+}
+
 fn is_font_file(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -863,6 +893,9 @@ pub fn font_plan() -> FontPlan {
             continue;
         };
         if used.iter().any(|existing| existing == path) {
+            continue;
+        }
+        if is_color_emoji(path) {
             continue;
         }
         let Some((family, bytes)) = read_font(path, budget) else {

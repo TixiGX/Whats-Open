@@ -1334,6 +1334,9 @@ pub struct FontInfo {
     pub file: String,
     pub mono: String,
     pub fallbacks: usize,
+    /// `true` se le emoji e i simboli arrivano dai font compilati nel binario,
+    /// perché nel sistema non c'era un carattere adatto.
+    pub builtin_emoji: bool,
     /// Da dove viene la famiglia: "gsettings", "gtk-font-name", …
     pub source: String,
     /// `true` se il sistema non aveva font e sono rimasti quelli incorporati.
@@ -1387,6 +1390,17 @@ pub fn install_system_fonts(ctx: &egui::Context) {
         mono: false,
         ui: true,
     });
+    // Emoji e simboli. Su Debian il pacchetto delle emoji fornisce solo il
+    // carattere a colori (bitmap), che qui non si può disegnare: è per questo
+    // che restavano i quadratini. I caratteri incorporati in egui (NotoEmoji
+    // e emoji-icon-font) vengono quindi sempre messi in coda alla catena: si
+    // usano solo per i glifi che il carattere del sistema non ha, e non
+    // occupano memoria finché non servono davvero.
+    let builtin_emoji = !plan
+        .fallback
+        .iter()
+        .any(|face| face.file.to_ascii_lowercase().contains("emoji"));
+
     let mono_name = plan
         .mono
         .as_ref()
@@ -1464,6 +1478,21 @@ pub fn install_system_fonts(ctx: &egui::Context) {
         proportional.push(face.key.clone());
         monospace.push(face.key);
     }
+    {
+        // Le famiglie incorporate di egui (NotoEmoji + emoji-icon-font +
+        // Ubuntu-Light) restano in coda: si usano solo per i glifi che il
+        // carattere del sistema non ha.
+        let defaults = egui::FontDefinitions::default();
+        for (name, data) in defaults.font_data {
+            definitions.font_data.entry(name).or_insert(data);
+        }
+        if let Some(chain) = defaults.families.get(&egui::FontFamily::Proportional) {
+            proportional.extend(chain.iter().cloned());
+        }
+        if let Some(chain) = defaults.families.get(&egui::FontFamily::Monospace) {
+            monospace.extend(chain.iter().cloned());
+        }
+    }
     definitions
         .families
         .insert(egui::FontFamily::Proportional, proportional);
@@ -1486,6 +1515,7 @@ pub fn install_system_fonts(ctx: &egui::Context) {
             file: ui_file,
             mono: mono_family,
             fallbacks,
+            builtin_emoji,
             source: plan.source.to_string(),
             builtin: false,
         });
@@ -1541,6 +1571,7 @@ fn set_builtin_fonts(ctx: &egui::Context) {
             file: String::new(),
             mono: String::new(),
             fallbacks: 0,
+            builtin_emoji: true,
             source: String::new(),
             builtin: true,
         });
@@ -1575,7 +1606,22 @@ pub fn apply(ctx: &egui::Context, system_fonts: bool) {
     style.spacing.button_padding = egui::vec2(11.0, 7.0);
     style.spacing.interact_size.y = 32.0;
     style.spacing.menu_margin = egui::Margin::same(6);
+    style.spacing.window_margin = egui::Margin::same(12);
     style.animation_time = 0.12;
+
+    // Barre di scorrimento sottili e flottanti, come nei file manager di
+    // GNOME: non rubano spazio e compaiono solo quando servono.
+    let mut scroll = egui::style::ScrollStyle::floating();
+    scroll.bar_width = 10.0;
+    scroll.floating_allocated_width = 0.0;
+    scroll.floating_width = 3.0;
+    scroll.dormant_handle_opacity = 0.0;
+    scroll.active_handle_opacity = 0.35;
+    scroll.interact_handle_opacity = 0.75;
+    // La maniglia prende il colore del testo in primo piano: un grigio medio la
+    // rende visibile su temi chiari e scuri senza toccare i pulsanti.
+    scroll.foreground_color = true;
+    style.spacing.scroll = scroll;
 
     let mut v = if mode().is_dark() {
         egui::Visuals::dark()
@@ -1591,8 +1637,8 @@ pub fn apply(ctx: &egui::Context, system_fonts: bool) {
     v.hyperlink_color = palette.text;
     v.override_text_color = None;
     v.window_stroke = Stroke::new(1.0, palette.border);
-    v.window_corner_radius = egui::CornerRadius::same(16);
-    v.menu_corner_radius = egui::CornerRadius::same(12);
+    v.window_corner_radius = egui::CornerRadius::same(18);
+    v.menu_corner_radius = egui::CornerRadius::same(14);
     v.selection.bg_fill = palette.hover;
     v.selection.stroke = Stroke::new(1.0, palette.text);
 
@@ -1600,13 +1646,13 @@ pub fn apply(ctx: &egui::Context, system_fonts: bool) {
     v.widgets.noninteractive.weak_bg_fill = palette.panel;
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.border);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette.muted);
-    v.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
+    v.widgets.noninteractive.corner_radius = egui::CornerRadius::same(12);
 
     v.widgets.inactive.bg_fill = palette.surface;
     v.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
     v.widgets.inactive.bg_stroke = Stroke::NONE;
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, palette.text);
-    v.widgets.inactive.corner_radius = egui::CornerRadius::same(10);
+    v.widgets.inactive.corner_radius = egui::CornerRadius::same(12);
 
     v.widgets.hovered.bg_fill = palette.hover;
     v.widgets.hovered.weak_bg_fill = palette.hover;
@@ -1628,6 +1674,8 @@ pub fn apply(ctx: &egui::Context, system_fonts: bool) {
 
     style.visuals = v;
     ctx.set_global_style(style);
+
+
 }
 
 #[cfg(test)]

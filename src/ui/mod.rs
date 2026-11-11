@@ -28,6 +28,7 @@ use crate::theme::pal;
 use crate::util::{self, Paths};
 
 use gfx::Textures;
+use self::widgets as ui_widgets;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Conn {
@@ -189,6 +190,18 @@ pub struct App {
     /// Altezza dell'ultima schermata di accesso disegnata: serve a centrarla
     /// in verticale invece di lasciarla appoggiata in alto.
     pub login_height: f32,
+    /// Scorrimento della conversazione: si muove con una breve inerzia invece
+    /// che a scatti di un dentello di rotella alla volta.
+    pub scroll_pending: f32,
+    /// `true` mentre la conversazione segue il fondo: i messaggi nuovi non
+    /// spostano la vista se stai leggendo lo storico.
+    pub follow_bottom: bool,
+    /// Rettangolo dell'ultimo elenco di messaggi: serve a capire se la rotella
+    /// sta scorrendo la conversazione o qualcos'altro.
+    pub scroll_rect: Option<egui::Rect>,
+    /// C'è qualcosa sotto il bordo inferiore: si può mostrare il pulsante
+    /// "vai in fondo".
+    pub scroll_below: bool,
     pub started: Instant,
 }
 
@@ -303,6 +316,10 @@ impl App {
             scroll_bottom: false,
             usage: None,
             login_height: 0.0,
+            scroll_pending: 0.0,
+            follow_bottom: true,
+            scroll_rect: None,
+            scroll_below: false,
             started: Instant::now(),
         };
         app.sort_chats();
@@ -1981,31 +1998,46 @@ impl eframe::App for App {
             self.narrow = width < 820.0;
             let sidebar_here = !self.narrow || self.selected.is_none();
 
+            // I pannelli sono schede flottanti staccate dal bordo della
+            // finestra: lo sfondo fa da cornice, come nei programmi di GNOME.
+            let frame = egui::Margin {
+                left: 8,
+                right: 4,
+                top: 8,
+                bottom: 8,
+            };
             if sidebar_here && !self.narrow {
                 egui::Panel::left("chats")
-                    .default_size(322.0)
-                    .min_size(232.0)
-                    .max_size((width * 0.46).max(232.0))
+                    .default_size(332.0)
+                    .min_size(240.0)
+                    .max_size((width * 0.46).max(240.0))
                     .resizable(true)
                     .frame(
                         egui::Frame::new()
-                            .fill(pal().panel)
-                            .inner_margin(egui::Margin::ZERO),
+                            .fill(pal().bg)
+                            .inner_margin(frame),
                     )
-                    .show(ui, |ui| self.sidebar_ui(ui));
+                    .show(ui, |ui| {
+                        ui_widgets::card(ui, pal().panel, |ui| self.sidebar_ui(ui));
+                    });
             }
 
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
                         .fill(pal().bg)
-                        .inner_margin(egui::Margin::ZERO),
+                        .inner_margin(egui::Margin {
+                            left: if self.narrow { 8 } else { 4 },
+                            right: 8,
+                            top: 8,
+                            bottom: 8,
+                        }),
                 )
                 .show(ui, |ui| {
                     if sidebar_here && self.narrow {
-                        self.sidebar_ui(ui);
+                        ui_widgets::card(ui, pal().panel, |ui| self.sidebar_ui(ui));
                     } else {
-                        self.chat_ui(ui);
+                        ui_widgets::card(ui, pal().bg, |ui| self.chat_ui(ui));
                     }
                 });
         } else {
