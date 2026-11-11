@@ -283,7 +283,10 @@ impl App {
             })
             .unwrap_or(false);
         if hovered {
-            let wheel = ui.input(|input| input.raw_scroll_delta.y);
+            // `smooth_scroll_delta` è già la rotella "addolcita" da egui (in
+            // punti), la stessa che userebbe uno ScrollArea: il movimento è
+            // fluido anche sui touchpad e non a scatti di un dentello.
+            let wheel = ui.input(|input| input.smooth_scroll_delta.y);
             if wheel != 0.0 {
                 // Rotella in alto (positivo) = torna indietro nello storico.
                 self.scroll_pending -= wheel;
@@ -303,6 +306,10 @@ impl App {
             self.scroll_pending = 0.0;
         }
         if step != 0.0 {
+            ui.ctx().request_repaint();
+        } else if ui.input(|input| input.is_scrolling()) {
+            // La rotella addolcita continua a scendere per qualche fotogramma:
+            // senza questa richiesta l'animazione si fermerebbe a metà.
             ui.ctx().request_repaint();
         }
 
