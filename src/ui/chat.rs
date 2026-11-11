@@ -1711,16 +1711,14 @@ mod tests {
     fn emoji_non_allunga_la_riga_di_testo() {
         let ctx = contesto();
         let mut height = 0.0;
-        let _ = ctx.run(input(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let galley = ui.painter().layout(
-                    "Ciao! Come procede con il client? 😀".to_string(),
-                    egui::FontId::proportional(14.0),
-                    Color32::WHITE,
-                    300.0,
-                );
-                height = galley.size().y;
-            });
+        let _ = ctx.run_ui(input(), |ui| {
+            let galley = ui.painter().layout(
+                "Ciao! Come procede con il client? 😀".to_string(),
+                egui::FontId::proportional(14.0),
+                Color32::WHITE,
+                300.0,
+            );
+            height = galley.size().y;
         });
         assert!(
             height > 0.0 && height <= 40.0,
@@ -1732,19 +1730,17 @@ mod tests {
     fn il_fumetto_non_prende_tutta_la_finestra() {
         let ctx = contesto();
         let mut rect = egui::Rect::NOTHING;
-        let _ = ctx.run(input(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let inner = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    egui::Frame::new()
-                        .fill(Color32::GRAY)
-                        .inner_margin(egui::Margin::symmetric(12, 7))
-                        .show(ui, |ui| {
-                            ui.set_width(220.0);
-                            ui.label("Ciao! Come procede con il client? 😀");
-                        });
-                });
-                rect = inner.response.rect;
+        let _ = ctx.run_ui(input(), |ui| {
+            let inner = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                egui::Frame::new()
+                    .fill(Color32::GRAY)
+                    .inner_margin(egui::Margin::symmetric(12, 7))
+                    .show(ui, |ui| {
+                        ui.set_width(220.0);
+                        ui.label("Ciao! Come procede con il client? 😀");
+                    });
             });
+            rect = inner.response.rect;
         });
         assert!(
             rect.height() > 0.0 && rect.height() < 80.0,
